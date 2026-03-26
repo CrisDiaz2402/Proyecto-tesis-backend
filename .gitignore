@@ -1,0 +1,29 @@
+# --- ENTORNOS VIRTUALES ---
+venv-fastapi/
+env/
+venv/
+ENV/
+
+# --- SEGURIDAD ---
+.env
+
+# --- BASES DE DATOS Y RAG ---
+vector_store/
+vector_store_cache/
+*.sqlite
+*.db
+
+# --- ARCHIVOS SUBIDOS ---
+uploads/*
+!uploads/.gitkeep
+
+# --- CACHE DE PYTHON ---
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# --- IDEs y OS ---
+.vscode/
+.idea/
+.DS_Store
