@@ -17,6 +17,12 @@ VECTOR_STORE_CACHE = os.getenv("VECTOR_STORE_CACHE", "./vector_store_cache")
 DOCUMENTS_DIR = Path(os.getenv("DOCUMENTS_DIR", "./documents"))
 DOCUMENTS_DIR.mkdir(parents=True, exist_ok=True)
 
+# ─── SEGURIDAD JWT ─────────────────────────────────────────────────────────────
+# SECRET_KEY se lee del .env. NUNCA hardcodear en el código.
+SECRET_KEY                 = os.getenv("SECRET_KEY")
+ALGORITHM                  = "HS256"
+ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))  # 8 horas por defecto
+
 
 # ─── 2. REGLAS DE NEGOCIO Y RAG (Única Fuente de Verdad - Hardcodeado) ─────────
 # Estos valores dictan cómo piensa la IA y las reglas estrictas del sistema.

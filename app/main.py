@@ -8,7 +8,7 @@ from app.db.database import engine
 from app.db import models
 
 # Enrutadores
-from app.api.routers import documents, chat
+from app.api.routers import documents, chat, usuarios, auth   # ← auth añadido
 
 # ── PHOENIX TRACING (Métricas de IA) ──────────────────────────────────────────
 import phoenix as px
@@ -51,14 +51,16 @@ app.add_middleware(
 )
 
 # ── REGISTRO DE ENRUTADORES ───────────────────────────────────────────────────
-app.include_router(documents.router)
-app.include_router(chat.router)
+app.include_router(auth.router)        # POST /api/auth/login  (público)
+app.include_router(documents.router)   # 🔒 protegido con JWT
+app.include_router(chat.router)        # público (lo usan los estudiantes)
+app.include_router(usuarios.router)    # 🔒 protegido con JWT
 
 # ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
 async def health_check():
     """Verifica que el servidor backend responda correctamente."""
     return {
-        "status": "ok", 
+        "status": "ok",
         "message": "Servidor Backend RAG en línea."
     }
