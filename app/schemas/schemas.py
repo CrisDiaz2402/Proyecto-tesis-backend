@@ -8,7 +8,12 @@ class DocumentoOut(BaseModel):
     nombre_archivo: str
     subido_por: str
     fecha_subida: datetime
-    estado: str
+    
+    # ─── ECOSISTEMA DUAL (Para pintar en el Frontend) ───
+    procesado_local: bool
+    procesado_cloud: bool
+    estado_local: str
+    estado_cloud: str
 
     class Config:
         from_attributes = True
@@ -24,6 +29,8 @@ class AccionGlobalResponse(BaseModel):
 
 class PreguntaRequest(BaseModel):
     pregunta: str
+    # NUEVO: Indica al RAG qué modelo usar ("local" o "cloud")
+    motor: str = "local" 
 
 class ChatResponse(BaseModel):
     pregunta_original: str
