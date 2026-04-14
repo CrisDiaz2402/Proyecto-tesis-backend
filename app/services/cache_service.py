@@ -6,10 +6,11 @@ from langchain_core.documents import Document
 from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 from app.core.config import (
-    get_cache_dir, get_cache_threshold,
+    get_cache_dir,
     EMBED_MODEL_LOCAL, EMBED_MODEL_CLOUD, GOOGLE_API_KEY,
-    UMBRAL_SIMILITUD,
 )
+# umbral_similitud ya NO viene de config.py — se lee dinámicamente desde la BD
+from app.services.rag_params_service import get_params
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAPA COMPLETO DE COMBINACIONES DE CACHÉ
@@ -23,11 +24,34 @@ _TODAS_LAS_COMBIS: list[tuple[str, str]] = [
     ("cloud", "cloud"),
 ]
 
-# Qué cachés afecta cada motor_vectores al borrar
 _COMBIS_POR_MOTOR_VECTORES: dict[str, list[tuple[str, str]]] = {
-    "local": [("local", "local"), ("local", "cloud")],  # cache_ll y cache_lc
-    "cloud": [("cloud", "cloud")],                       # solo cache_cc
+    "local": [("local", "local"), ("local", "cloud")],
+    "cloud": [("cloud", "cloud")],
 }
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# SINGLETON OllamaEmbeddings para el caché semántico local
+#
+# Problema original: _get_embeddings() creaba OllamaEmbeddings(model=...) en
+# cada llamada a buscar_en_cache() y guardar_en_cache(), añadiendo overhead de
+# inicialización incluso en los cache hits (que deben ser ultrarrápidos).
+#
+# NOTA: No importamos el singleton de rag_service.py para evitar importación
+# circular (rag_service importa cache_service). Mantenemos un singleton propio
+# que coexiste sin problema — ambos apuntan al mismo proceso Ollama.
+# ─────────────────────────────────────────────────────────────────────────────
+_ollama_embeddings_cache: OllamaEmbeddings | None = None
+
+
+def _get_ollama_embeddings_local() -> OllamaEmbeddings:
+    """Retorna la instancia singleton de OllamaEmbeddings para el caché local.
+    Se crea solo en la primera llamada y se reutiliza indefinidamente."""
+    global _ollama_embeddings_cache
+    if _ollama_embeddings_cache is None:
+        _ollama_embeddings_cache = OllamaEmbeddings(model=EMBED_MODEL_LOCAL)
+        print(f"[CACHÉ] ✅ OllamaEmbeddings inicializado (singleton, model={EMBED_MODEL_LOCAL})")
+    return _ollama_embeddings_cache
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -35,15 +59,16 @@ _COMBIS_POR_MOTOR_VECTORES: dict[str, list[tuple[str, str]]] = {
 # ─────────────────────────────────────────────────────────────────────────────
 
 def _get_embeddings(motor_vectores: str):
-    """Devuelve el modelo de embeddings según el motor de vectores activo."""
+    """Retorna embeddings según el motor.
+    Para local reutiliza el singleton; para cloud crea instancia nueva
+    (Google no mantiene estado local, es stateless por diseño)."""
     if motor_vectores == "cloud":
         return GoogleGenerativeAIEmbeddings(model=EMBED_MODEL_CLOUD, google_api_key=GOOGLE_API_KEY)
-    return OllamaEmbeddings(model=EMBED_MODEL_LOCAL)
+    return _get_ollama_embeddings_local()
 
 
 def _get_cache_db(motor_vectores: str, motor_llm: str) -> Chroma:
-    """Instancia la BD de caché correcta para la combinación de motores activa."""
-    cache_dir = get_cache_dir(motor_vectores, motor_llm)
+    cache_dir  = get_cache_dir(motor_vectores, motor_llm)
     embeddings = _get_embeddings(motor_vectores)
     return Chroma(
         persist_directory=str(cache_dir),
@@ -53,10 +78,6 @@ def _get_cache_db(motor_vectores: str, motor_llm: str) -> Chroma:
 
 
 def _es_respuesta_cacheable(respuesta: str) -> bool:
-    """
-    Valida que una respuesta sea digna de ser cacheada.
-    Evita propagar respuestas truncadas, errores o rechazos.
-    """
     if not respuesta or len(respuesta.strip()) < 20:
         return False
     texto = respuesta.lower().strip()
@@ -70,10 +91,6 @@ def _es_respuesta_cacheable(respuesta: str) -> bool:
 
 
 def _limpiar_un_cache(motor_vectores: str, motor_llm: str) -> str:
-    """
-    Borra completamente un caché específico (una combinación motor_vectores:motor_llm).
-    Devuelve un string con el resultado para componer mensajes multi-caché.
-    """
     cache_dir = get_cache_dir(motor_vectores, motor_llm)
     if not os.path.exists(str(cache_dir)):
         return f"caché {motor_vectores}:{motor_llm} ya estaba vacío"
@@ -88,10 +105,6 @@ def _limpiar_un_cache(motor_vectores: str, motor_llm: str) -> str:
 
 
 def _limpiar_doc_en_un_cache(nombre_coleccion: str, motor_vectores: str, motor_llm: str) -> str:
-    """
-    Elimina del caché específico todas las entradas de un documento.
-    Devuelve string con resultado para componer mensajes.
-    """
     cache_dir = get_cache_dir(motor_vectores, motor_llm)
     if not os.path.exists(str(cache_dir)):
         return f"{motor_vectores}:{motor_llm} vacío"
@@ -122,7 +135,7 @@ def _limpiar_doc_en_un_cache(nombre_coleccion: str, motor_vectores: str, motor_l
 def buscar_en_cache(pregunta: str, motor_vectores: str, motor_llm: str) -> str | None:
     """
     Busca en el caché semántico de la combinación de motores activa.
-    Devuelve la respuesta cacheada si existe y supera el umbral, o None.
+    umbral_similitud se lee dinámicamente desde get_params() en cada llamada.
     """
     cache_dir = get_cache_dir(motor_vectores, motor_llm)
     if not os.path.exists(str(cache_dir)):
@@ -133,14 +146,20 @@ def buscar_en_cache(pregunta: str, motor_vectores: str, motor_llm: str) -> str |
         if cache_db._collection.count() == 0:
             return None
 
-        threshold = get_cache_threshold(motor_vectores, motor_llm)
+        # Leer umbral dinámico desde la BD
+        umbral_similitud = get_params().get("umbral_similitud", 0.02)
+
         resultados = cache_db.similarity_search_with_relevance_scores(pregunta, k=1)
         if not resultados:
             return None
 
         doc, score = resultados[0]
-        if score >= (1 - UMBRAL_SIMILITUD):
-            print(f"[CACHÉ] ✅ Hit semántico (score={score:.3f}, umbral={threshold:.2f}, modo={motor_vectores}:{motor_llm})")
+        if score >= (1 - umbral_similitud):
+            print(
+                f"[CACHÉ] ✅ Hit semántico "
+                f"(score={score:.3f}, umbral_sim={umbral_similitud:.3f}, "
+                f"modo={motor_vectores}:{motor_llm})"
+            )
             return doc.metadata.get("respuesta")
 
         return None
@@ -156,10 +175,6 @@ def guardar_en_cache(
     motor_vectores: str = "local",
     motor_llm: str = "local",
 ) -> None:
-    """
-    Guarda una respuesta en el caché del modo activo.
-    Solo cachea respuestas válidas (no truncadas, no rechazos).
-    """
     if not _es_respuesta_cacheable(respuesta):
         print(f"[CACHÉ] ⚠️ Respuesta no cacheada (inválida, truncada o rechazo).")
         return
@@ -170,10 +185,10 @@ def guardar_en_cache(
             Document(
                 page_content=pregunta,
                 metadata={
-                    "respuesta":         respuesta,
-                    "documento_origen":  documento_origen,
-                    "motor_vectores":    motor_vectores,
-                    "motor_llm":         motor_llm,
+                    "respuesta":        respuesta,
+                    "documento_origen": documento_origen,
+                    "motor_vectores":   motor_vectores,
+                    "motor_llm":        motor_llm,
                 },
             )
         ])
@@ -186,17 +201,7 @@ def limpiar_cache_por_documento(
     nombre_coleccion: str,
     motor_vectores: str = "local",
 ) -> dict:
-    """
-    Elimina del caché todas las entradas asociadas a un documento específico,
-    en TODOS los cachés que usan ese motor_vectores.
-
-    - motor_vectores="local" → limpia cache_ll (local:local) y cache_lc (local:cloud)
-    - motor_vectores="cloud" → limpia cache_cc (cloud:cloud)
-
-    Esto es correcto porque un documento vectorizado en "local" puede tener
-    respuestas cacheadas tanto en modo local:local como en modo local:cloud.
-    """
-    combis = _COMBIS_POR_MOTOR_VECTORES.get(motor_vectores, [])
+    combis    = _COMBIS_POR_MOTOR_VECTORES.get(motor_vectores, [])
     resultados = [
         _limpiar_doc_en_un_cache(nombre_coleccion, mv, ml)
         for mv, ml in combis
@@ -213,33 +218,20 @@ def limpiar_cache(
     """
     Borrado total del caché. Admite tres modos de uso:
 
-    1. Por motor completo (shorthand desde documents.py):
-         limpiar_cache(motor="local")   → limpia cache_ll y cache_lc
-         limpiar_cache(motor="cloud")   → limpia cache_cc
-         limpiar_cache(motor="all")     → limpia los 3 cachés
-
-    2. Por combinación exacta (forma explícita):
-         limpiar_cache(motor_vectores="local", motor_llm="cloud")  → solo cache_lc
-
-    3. Por scope global:
-         limpiar_cache(scope="all")     → limpia los 3 cachés
-
-    Regla de expansión cuando se usa motor= shorthand:
-        "local" → limpia cache_ll + cache_lc  (todo lo que usa vectores locales)
-        "cloud" → limpia cache_cc             (todo lo que usa vectores cloud)
-        "all"   → limpia los 3 cachés
+    1. Scope global:   limpiar_cache(scope="all")         → limpia los 3 cachés
+    2. Shorthand:      limpiar_cache(motor="local")        → cache_ll + cache_lc
+                       limpiar_cache(motor="cloud")        → cache_cc
+                       limpiar_cache(motor="all")          → los 3 cachés
+    3. Combinación:    limpiar_cache(motor_vectores="local", motor_llm="cloud") → cache_lc
     """
-    # Scope global explícito
     if scope == "all" or motor == "all":
         resultados = [_limpiar_un_cache(mv, ml) for mv, ml in _TODAS_LAS_COMBIS]
         return {"mensaje": f"Todos los cachés limpiados: {' | '.join(resultados)}"}
 
-    # Shorthand motor= expande por motor_vectores
     if motor is not None:
-        combis = _COMBIS_POR_MOTOR_VECTORES.get(motor, [(motor, motor)])
+        combis     = _COMBIS_POR_MOTOR_VECTORES.get(motor, [(motor, motor)])
         resultados = [_limpiar_un_cache(mv, ml) for mv, ml in combis]
         return {"mensaje": " | ".join(resultados)}
 
-    # Forma explícita: combinación exacta
     resultado = _limpiar_un_cache(motor_vectores, motor_llm)
     return {"mensaje": resultado}
