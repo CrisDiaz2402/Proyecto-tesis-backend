@@ -12,17 +12,14 @@ from app.db import models
 from app.api.routers import documents, chat, usuarios, auth, configuracion
 from app.api.routers import rag_params    # parámetros RAG editables
 from app.api.routers import evaluacion    # evaluador RAG
+from app.api.routers import monitor       # ← NUEVO: monitoreo de concurrencia
 
 # ── PHOENIX TRACING ───────────────────────────────────────────────────────────
-# Solo se lanza el servidor Phoenix UI aquí.
-# El TracerProvider, LangChainInstrumentor y los spans del RAG se configuran
-# en rag_service.py mediante phoenix.otel.register(), que evita conflictos
-# entre dos TracerProvider activos al mismo tiempo.
 import phoenix as px
 px.launch_app()
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Inicializar Base de Datos (crea la tabla configuracion_rag si no existe)
+# Inicializar Base de Datos
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="API Asistente RAG EPN (Dual Local/Cloud)", version="3.0.0")
@@ -51,6 +48,7 @@ app.include_router(usuarios.router)
 app.include_router(configuracion.router)
 app.include_router(rag_params.router)
 app.include_router(evaluacion.router)
+app.include_router(monitor.router)    # ← NUEVO
 
 # ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
@@ -67,24 +65,49 @@ async def health_check():
 @app.on_event("startup")
 async def precalentar_sistema():
     """
-    Al iniciar el servidor, pre-carga el modelo LLM local en memoria (Ollama)
-    y pre-popula el caché con las preguntas más frecuentes del sistema.
-
-    Solo se ejecuta cuando el motor LLM activo es LOCAL, porque:
-    - El precalentamiento con LLM cloud (Gemini) consume quota de API innecesariamente.
-    - Ollama necesita el precalentamiento para evitar la latencia de carga
-      inicial del modelo (~5-10 segundos en llama3.1:8b).
-
-    Efecto adicional con los singletons: este precalentamiento también inicializa
-    OllamaEmbeddings, OllamaLLM y ChromaDB PersistentClient una sola vez,
-    de modo que la primera consulta real del usuario ya encuentra todo listo.
+    Al iniciar el servidor:
+      1. Migra los prompts NULL en BD al texto hardcodeado por defecto.
+      2. Pre-carga el modelo LLM local en memoria (Ollama).
+      3. Pre-popula el caché con las preguntas más frecuentes del sistema.
     """
+    from app.services.rag_params_service import (
+        _get_or_create,
+        PROMPT_PRINCIPAL_DEFAULT,
+        PROMPT_HYDE_DEFAULT,
+    )
+    from app.db.database import SessionLocal
     from app.services.rag_service import consultar_base_conocimiento
     from app.services.config_service import obtener_motor_activo, obtener_configuracion
 
+    # ── 1. MIGRACIÓN DE PROMPTS NULL ──────────────────────────────────────────
+    try:
+        db = SessionLocal()
+        config = _get_or_create(db)
+        actualizado = False
+
+        if not config.prompt_principal:
+            config.prompt_principal = PROMPT_PRINCIPAL_DEFAULT
+            actualizado = True
+
+        if not config.prompt_hyde:
+            config.prompt_hyde = PROMPT_HYDE_DEFAULT
+            actualizado = True
+
+        if actualizado:
+            db.commit()
+            print("[STARTUP] ✅ Prompts guardados en BD (migración desde NULL completada).")
+        else:
+            print("[STARTUP] ✅ Prompts ya presentes en BD, no requieren migración.")
+
+        db.close()
+    except Exception as e:
+        print(f"[STARTUP] ⚠️  Error al migrar prompts en BD: {e}")
+        print("[STARTUP]    El servidor continúa iniciando normalmente.")
+
+    # ── 2 y 3. PRECALENTAMIENTO DEL SISTEMA RAG ───────────────────────────────
     motor_activo = obtener_motor_activo()
-    config       = obtener_configuracion()
-    motor_llm    = config.get("motor_llm", "local")
+    config_motor = obtener_configuracion()
+    motor_llm    = config_motor.get("motor_llm", "local")
 
     if motor_llm == "cloud":
         print(f"[STARTUP] ⏭️  Precalentamiento omitido — motor LLM activo es cloud ({motor_activo}).")

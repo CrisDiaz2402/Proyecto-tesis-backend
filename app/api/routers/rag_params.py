@@ -3,8 +3,8 @@
 Router para gestión de parámetros RAG desde el frontend.
 
 Endpoints:
-  GET  /api/rag-params          → parámetros actuales + defaults + límites
-  PUT  /api/rag-params          → actualizar parámetros + limpieza automática
+  GET  /api/rag-params          → parámetros actuales + defaults + límites + prompts_default_texto
+  PUT  /api/rag-params          → actualizar parámetros (incluye prompts) + limpieza automática
   POST /api/rag-params/reset    → restaurar defaults + limpieza automática
   GET  /api/rag-params/defaults → solo defaults y límites (sin tocar BD)
 """
@@ -18,7 +18,13 @@ from app.db.database import SessionLocal
 from app.db import models
 from app.core.security import get_current_user
 from app.services import rag_params_service
-from app.services.rag_params_service import DEFAULTS, PARAM_LIMITS, determinar_limpieza
+from app.services.rag_params_service import (
+    DEFAULTS,
+    PARAM_LIMITS,
+    PROMPT_PRINCIPAL_DEFAULT,
+    PROMPT_HYDE_DEFAULT,
+    determinar_limpieza,
+)
 
 router = APIRouter(prefix="/api/rag-params", tags=["rag-params"])
 
@@ -70,6 +76,12 @@ class RagParamsRequest(BaseModel):
 
     # ── Bajo impacto — Caché L1 ───────────────────────────────────────────────
     max_l1_entries:              Optional[int]   = Field(None, ge=50,   le=2000)
+
+    # ── Prompts editables ─────────────────────────────────────────────────────
+    # Sin restricciones de rango — cualquier string es válido.
+    # Cadena vacía "" → el servicio lo interpreta como "volver al hardcodeado".
+    prompt_principal:            Optional[str]   = Field(None)
+    prompt_hyde:                 Optional[str]   = Field(None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -128,16 +140,23 @@ def get_rag_params(
     - parametros_actuales: valores guardados en BD (o defaults si es primera vez).
     - defaults: valores por defecto del sistema.
     - limites: min/max/type/label/descripcion por parámetro.
+    - prompts_default_texto: textos hardcodeados de los prompts (para el frontend).
     """
     try:
         config  = rag_params_service.get_params_con_db(db)
         current = rag_params_service._config_to_dict(config)
         return {
-            "ok": True,
-            "parametros_actuales": current,
-            "defaults":            DEFAULTS,
-            "limites":             PARAM_LIMITS,
-            "fecha_actualizacion": config.fecha_actualizacion,
+            "ok":                   True,
+            "parametros_actuales":  current,
+            "defaults":             DEFAULTS,
+            "limites":              PARAM_LIMITS,
+            "fecha_actualizacion":  config.fecha_actualizacion,
+            # ── NUEVO: textos hardcodeados para que el frontend pueda mostrar
+            # el placeholder correcto y detectar si el prompt fue personalizado.
+            "prompts_default_texto": {
+                "prompt_principal": PROMPT_PRINCIPAL_DEFAULT,
+                "prompt_hyde":      PROMPT_HYDE_DEFAULT,
+            },
         }
     except Exception as e:
         raise HTTPException(
@@ -153,8 +172,12 @@ def update_rag_params(
     _: models.Usuario = Depends(get_current_user),
 ):
     """
-    Actualiza uno o más parámetros RAG y ejecuta automáticamente la limpieza
-    de vectores y/o cachés que corresponda según lo que cambió.
+    Actualiza uno o más parámetros RAG (incluidos los prompts) y ejecuta
+    automáticamente la limpieza de vectores y/o cachés que corresponda.
+
+    Para los prompts:
+    - Texto completo → se persiste en BD y se usa en runtime.
+    - Cadena vacía "" → restaura al texto hardcodeado por defecto.
 
     Responde con:
     - ok: bool
@@ -163,7 +186,9 @@ def update_rag_params(
     - advertencias: avisos importantes (ej: requiere reindexar documentos).
     - parametros_actuales: estado final de todos los parámetros.
     """
-    # Filtrar solo los campos que vienen en el request (no None)
+    # Filtrar solo los campos que vienen en el request (no None).
+    # Los prompts pueden venir como cadena vacía "" (reset), que sí es un valor
+    # válido y no debe filtrarse — solo se filtra None (campo no enviado).
     new_data = {k: v for k, v in request.dict().items() if v is not None}
 
     if not new_data:
@@ -172,7 +197,7 @@ def update_rag_params(
             detail="No se enviaron parámetros para actualizar. Envía al menos un campo.",
         )
 
-    # Segunda capa de validación de rangos (redundante con Pydantic, pero explícita)
+    # Segunda capa de validación de rangos (solo para campos numéricos)
     errores = rag_params_service.validar_params(new_data)
     if errores:
         raise HTTPException(
@@ -236,8 +261,8 @@ def reset_rag_params(
     _: models.Usuario = Depends(get_current_user),
 ):
     """
-    Restaura TODOS los parámetros a sus valores por defecto y ejecuta
-    la limpieza automática correspondiente (compara actual vs default).
+    Restaura TODOS los parámetros (incluidos los prompts) a sus valores por
+    defecto y ejecuta la limpieza automática correspondiente.
     """
     try:
         old_params, new_params = rag_params_service.resetear_params(db)

@@ -23,6 +23,43 @@ from app.db import models
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# TEXTOS POR DEFECTO DE LOS PROMPTS
+#
+# Son idénticos a _PROMPT_PRINCIPAL_DEFAULT y _PROMPT_HYDE_DEFAULT de
+# rag_service.py. Se definen aquí (y no se importan desde rag_service) para
+# evitar importaciones circulares.
+#
+# Estos textos se usan en dos situaciones:
+#   1. Crear la fila id=1 por primera vez (_get_or_create).
+#   2. Migrar filas existentes que tengan NULL (startup de main.py).
+#   3. Resetear los prompts a su valor original (resetear_params).
+# ─────────────────────────────────────────────────────────────────────────────
+PROMPT_PRINCIPAL_DEFAULT = """Eres el Asistente Académico de la EPN. Eres un sistema estricto de extracción de datos, no un consejero.
+
+REGLAS ESTRICTAS E INQUEBRANTABLES:
+1. Cero Alucinaciones: Responde ÚNICAMENTE usando los datos explícitos o claramente implicados por el CONTEXTO.
+2. Prohibido adivinar: NUNCA inventes nombres de materias, prerrequisitos, créditos, niveles o recomendaciones.
+3. Regla de Vacío OBLIGATORIA: Si la pregunta trata sobre algo completamente ausente del CONTEXTO (ningún dato, ninguna referencia directa ni indirecta), responde exactamente: "Lo siento, esa información no existe en mi base de datos oficial." — Si el CONTEXTO contiene datos relacionados que implican o contradicen el dato de la pregunta, úsalos para responder aunque la respuesta no sea una cita textual exacta.
+4. Estilo Directo: Responde directamente con la información. NUNCA uses frases como "Según el contexto", "Te recomiendo", o "El documento dice".
+5. Entidades inexistentes: Si el usuario pregunta por una materia, código o persona que NO aparece nombrada en el CONTEXTO, responde solo con el mensaje de vacío de la Regla 3. No sugieras alternativas similares ni menciones otras materias del CONTEXTO como reemplazo.
+
+CONTEXTO DE CONOCIMIENTO:
+{contexto}
+
+Pregunta del usuario: {pregunta}
+Respuesta:
+[FIN]"""
+
+PROMPT_HYDE_DEFAULT = (
+    "Escribe una respuesta corta, factual y directa en español a esta pregunta "
+    "sobre la malla curricular de la Carrera de Ciencias de la Computación de la EPN. "
+    "Usa términos académicos concretos. Máximo 3 oraciones. "
+    "No expliques, solo responde con datos.\n\n"
+    "Pregunta: {pregunta}\nRespuesta:"
+)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # VALORES POR DEFECTO — espejo de los Column(default=...) en models.py
 # ─────────────────────────────────────────────────────────────────────────────
 DEFAULTS: dict[str, Any] = {
@@ -56,9 +93,11 @@ DEFAULTS: dict[str, Any] = {
     # Bajo impacto — Caché L1
     "max_l1_entries": 500,
 
-    # Prompts editables — None significa «usar el hardcodeado»
-    "prompt_principal": None,
-    "prompt_hyde":      None,
+    # Prompts editables — se guardan en BD con su texto completo.
+    # NULL en BD significa que rag_service usará el fallback hardcodeado,
+    # pero desde este deploy siempre se inicializan con el texto real.
+    "prompt_principal": PROMPT_PRINCIPAL_DEFAULT,
+    "prompt_hyde":      PROMPT_HYDE_DEFAULT,
 }
 
 
@@ -215,7 +254,8 @@ def _config_to_dict(config: models.ConfiguracionRAG) -> dict[str, Any]:
 
 def _get_or_create(db: Session) -> models.ConfiguracionRAG:
     """
-    Devuelve la fila singleton (id=1). Si no existe la crea con los defaults.
+    Devuelve la fila singleton (id=1). Si no existe la crea con los defaults,
+    incluyendo el texto completo de los prompts (nunca NULL en filas nuevas).
     """
     config = db.query(models.ConfiguracionRAG).filter_by(id=1).first()
     if config is None:
@@ -277,7 +317,7 @@ def actualizar_params(
 ) -> tuple[dict[str, Any], dict[str, Any]]:
     """
     Persiste los campos de new_data en BD.
-    Para prompts: cadena vacía "" → guarda None (vuelve al hardcodeado).
+    Para prompts: cadena vacía "" → restaura al texto por defecto (no NULL).
     Devuelve (old_params_dict, new_params_dict).
     """
     config    = _get_or_create(db)
@@ -286,9 +326,9 @@ def actualizar_params(
     for campo, valor in new_data.items():
         if not hasattr(config, campo):
             continue
-        # Cadena vacía en prompts → resetear a NULL
+        # Cadena vacía en prompts → volver al texto hardcodeado (no a NULL)
         if campo in _CAMPOS_TEXTO and isinstance(valor, str) and valor.strip() == "":
-            setattr(config, campo, None)
+            setattr(config, campo, DEFAULTS[campo])
         else:
             setattr(config, campo, valor)
 
@@ -300,8 +340,8 @@ def actualizar_params(
 
 def resetear_params(db: Session) -> tuple[dict[str, Any], dict[str, Any]]:
     """
-    Restaura TODOS los parámetros numéricos a sus defaults.
-    Los prompts se resetean a NULL (vuelven al hardcodeado).
+    Restaura TODOS los parámetros (incluidos los prompts) a sus defaults.
+    Los prompts se resetean al texto completo hardcodeado, nunca a NULL.
     Devuelve (old_params_dict, new_params_dict).
     """
     config    = _get_or_create(db)
