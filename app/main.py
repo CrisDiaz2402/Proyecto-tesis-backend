@@ -10,25 +10,19 @@ from app.db import models
 
 # Enrutadores
 from app.api.routers import documents, chat, usuarios, auth, configuracion
+from app.api.routers import rag_params    # parámetros RAG editables
+from app.api.routers import evaluacion    # evaluador RAG
 
 # ── PHOENIX TRACING ───────────────────────────────────────────────────────────
+# Solo se lanza el servidor Phoenix UI aquí.
+# El TracerProvider, LangChainInstrumentor y los spans del RAG se configuran
+# en rag_service.py mediante phoenix.otel.register(), que evita conflictos
+# entre dos TracerProvider activos al mismo tiempo.
 import phoenix as px
-from openinference.instrumentation.langchain import LangChainInstrumentor
-from opentelemetry import trace as trace_api
-from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
-from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-
 px.launch_app()
-tracer_provider = TracerProvider()
-tracer_provider.add_span_processor(
-    SimpleSpanProcessor(OTLPSpanExporter("http://127.0.0.1:6006/v1/traces"))
-)
-trace_api.set_tracer_provider(tracer_provider)
-LangChainInstrumentor().instrument()
 # ─────────────────────────────────────────────────────────────────────────────
 
-# Inicializar Base de Datos
+# Inicializar Base de Datos (crea la tabla configuracion_rag si no existe)
 models.Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="API Asistente RAG EPN (Dual Local/Cloud)", version="3.0.0")
@@ -55,14 +49,16 @@ app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(usuarios.router)
 app.include_router(configuracion.router)
+app.include_router(rag_params.router)
+app.include_router(evaluacion.router)
 
 # ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
 async def health_check():
     return {
-        "status": "ok",
-        "message": "Servidor Backend RAG (Arquitectura Dual) en línea.",
-        "version": "3.0.0",
+        "status":        "ok",
+        "message":       "Servidor Backend RAG (Arquitectura Dual) en línea.",
+        "version":       "3.0.0",
         "modos_activos": ["local:local", "local:cloud", "cloud:cloud"],
     }
 
@@ -76,9 +72,12 @@ async def precalentar_sistema():
 
     Solo se ejecuta cuando el motor LLM activo es LOCAL, porque:
     - El precalentamiento con LLM cloud (Gemini) consume quota de API innecesariamente.
-    - Ollama sí necesita el precalentamiento para evitar la latencia de carga
+    - Ollama necesita el precalentamiento para evitar la latencia de carga
       inicial del modelo (~5-10 segundos en llama3.1:8b).
-    - Con LLM cloud la primera consulta real es igualmente rápida sin precalentar.
+
+    Efecto adicional con los singletons: este precalentamiento también inicializa
+    OllamaEmbeddings, OllamaLLM y ChromaDB PersistentClient una sola vez,
+    de modo que la primera consulta real del usuario ya encuentra todo listo.
     """
     from app.services.rag_service import consultar_base_conocimiento
     from app.services.config_service import obtener_motor_activo, obtener_configuracion
@@ -87,10 +86,8 @@ async def precalentar_sistema():
     config       = obtener_configuracion()
     motor_llm    = config.get("motor_llm", "local")
 
-    # No precalentar si el LLM activo es cloud: preservar quota de API
     if motor_llm == "cloud":
         print(f"[STARTUP] ⏭️  Precalentamiento omitido — motor LLM activo es cloud ({motor_activo}).")
-        print("[STARTUP]    El precalentamiento solo aplica al LLM local (Ollama).")
         return
 
     print(f"[STARTUP] 🔥 Iniciando precalentamiento del sistema RAG (motor: {motor_activo})...")
@@ -112,7 +109,5 @@ async def precalentar_sistema():
             )
         print(f"[STARTUP] ✅ Precalentamiento completado — {len(preguntas_frecuentes)} preguntas procesadas.")
     except Exception as e:
-        # El precalentamiento es opcional: si falla (p.ej. no hay documentos aún),
-        # el servidor debe arrancar igual.
         print(f"[STARTUP] ⚠️  Precalentamiento omitido: {e}")
         print("[STARTUP]    El servidor continúa iniciando normalmente.")
