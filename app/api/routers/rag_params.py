@@ -1,4 +1,3 @@
-# app/api/routers/rag_params.py
 """
 Router para gestión de parámetros RAG desde el frontend.
 
@@ -14,31 +13,18 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 from typing import Optional
 
-from app.db.database import SessionLocal
 from app.db import models
+from app.db.deps import get_db
 from app.core.security import get_current_user
+from app.core.prompts import PROMPT_PRINCIPAL_DEFAULT
 from app.services import rag_params_service
 from app.services.rag_params_service import (
     DEFAULTS,
     PARAM_LIMITS,
-    PROMPT_PRINCIPAL_DEFAULT,
-    PROMPT_HYDE_DEFAULT,
     determinar_limpieza,
 )
 
 router = APIRouter(prefix="/api/rag-params", tags=["rag-params"])
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# DEPENDENCIA DE BD
-# ─────────────────────────────────────────────────────────────────────────────
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -47,41 +33,16 @@ def get_db():
 # ─────────────────────────────────────────────────────────────────────────────
 
 class RagParamsRequest(BaseModel):
-    # ── Alto impacto — Chunking ───────────────────────────────────────────────
-    breakpoint_threshold_amount: Optional[int]   = Field(None, ge=50,   le=95)
-
-    # ── Alto impacto — Retrieval ──────────────────────────────────────────────
+    # ── Parámetros con impacto demostrable ────────────────────────────────────
     umbral_relevancia_local:     Optional[float] = Field(None, ge=0.05, le=0.50)
     umbral_relevancia_cloud:     Optional[float] = Field(None, ge=0.10, le=0.70)
     rag_k_local:                 Optional[int]   = Field(None, ge=2,    le=20)
     rag_k_cloud:                 Optional[int]   = Field(None, ge=2,    le=15)
 
-    # ── Medio impacto — Tokens ────────────────────────────────────────────────
-    num_tokens_normal_local:     Optional[int]   = Field(None, ge=100,  le=800)
-    num_tokens_lista_local:      Optional[int]   = Field(None, ge=200,  le=1500)
-    num_tokens_normal_cloud:     Optional[int]   = Field(None, ge=200,  le=1500)
-    num_tokens_lista_cloud:      Optional[int]   = Field(None, ge=400,  le=3000)
-
-    # ── Medio impacto — Caché L2 ──────────────────────────────────────────────
-    cache_threshold_ll:          Optional[float] = Field(None, ge=0.60, le=0.99)
-    cache_threshold_lc:          Optional[float] = Field(None, ge=0.60, le=0.99)
-    cache_threshold_cc:          Optional[float] = Field(None, ge=0.70, le=0.99)
-    umbral_similitud:            Optional[float] = Field(None, ge=0.01, le=0.20)
-
-    # ── Bajo impacto — LLM local ──────────────────────────────────────────────
-    repeat_penalty:              Optional[float] = Field(None, ge=1.0,  le=1.8)
-    top_k_llm:                   Optional[int]   = Field(None, ge=1,    le=100)
-    top_p_llm:                   Optional[float] = Field(None, ge=0.1,  le=1.0)
-    hyde_num_predict:            Optional[int]   = Field(None, ge=40,   le=300)
-
-    # ── Bajo impacto — Caché L1 ───────────────────────────────────────────────
-    max_l1_entries:              Optional[int]   = Field(None, ge=50,   le=2000)
-
-    # ── Prompts editables ─────────────────────────────────────────────────────
+    # ── Prompt principal ──────────────────────────────────────────────────────
     # Sin restricciones de rango — cualquier string es válido.
     # Cadena vacía "" → el servicio lo interpreta como "volver al hardcodeado".
     prompt_principal:            Optional[str]   = Field(None)
-    prompt_hyde:                 Optional[str]   = Field(None)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -95,13 +56,9 @@ def _ejecutar_limpieza(limpieza: dict) -> list[str]:
     Retorna lista de acciones ejecutadas.
     """
     from app.services.cache_service import limpiar_cache
-    from app.services.rag_service import eliminar_todos_los_vectores_chroma, limpiar_cache_l1
+    from app.services.rag_service import eliminar_todos_los_vectores_chroma
 
     acciones: list[str] = []
-
-    if limpieza["limpiar_l1"]:
-        limpiar_cache_l1()
-        acciones.append("Caché L1 RAM limpiado")
 
     if limpieza["limpiar_cache_ll"]:
         limpiar_cache(motor_vectores="local", motor_llm="local")
@@ -155,7 +112,6 @@ def get_rag_params(
             # el placeholder correcto y detectar si el prompt fue personalizado.
             "prompts_default_texto": {
                 "prompt_principal": PROMPT_PRINCIPAL_DEFAULT,
-                "prompt_hyde":      PROMPT_HYDE_DEFAULT,
             },
         }
     except Exception as e:

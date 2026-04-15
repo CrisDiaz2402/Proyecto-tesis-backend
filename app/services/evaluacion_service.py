@@ -2,17 +2,15 @@
 """
 Servicio de evaluación RAG.
 
-Contiene toda la lógica de scoring trasladada desde scripts/evaluar_local.py:
+Contiene toda la lógica de scoring:
   - Normalización de texto y matching flexible de claves
   - Scoring por tipo: contiene / no_contiene / corrige / no_alucina
-  - Consulta a Phoenix REST API para métricas del sistema
   - Orquestación completa de una sesión de evaluación
   - Generador de progreso para streaming SSE (ejecutar_evaluacion_stream)
 """
 
 import re
 import time
-import requests
 from datetime import datetime, timezone
 from difflib import SequenceMatcher
 from typing import Generator
@@ -20,12 +18,6 @@ from typing import Generator
 from app.services.rag_service import consultar_base_conocimiento
 from app.services.config_service import obtener_motor_activo
 
-PHOENIX_URL = "http://localhost:6006"
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# NORMALIZACIÓN Y MATCHING
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _normalizar(texto: str) -> str:
     """Lowercase y sin tildes para comparación flexible."""
@@ -36,12 +28,7 @@ def _normalizar(texto: str) -> str:
 
 
 def _contiene_clave(respuesta: str, clave: str) -> bool:
-    """
-    True si 'clave' aparece en 'respuesta' de forma flexible:
-      1. Subcadena exacta normalizada
-      2. Número rodeado de no-dígitos (ej: "135" matchea "135 créditos")
-      3. Similitud de secuencia >= 0.85 como fallback para frases largas
-    """
+    """True si 'clave' aparece en 'respuesta' de forma flexible."""
     r = _normalizar(respuesta)
     c = _normalizar(clave)
 
@@ -77,10 +64,6 @@ def _es_rechazo(respuesta: str) -> bool:
     ]
     return any(f in r for f in frases)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# LÓGICA DE SCORING POR TIPO
-# ─────────────────────────────────────────────────────────────────────────────
 
 def _score_contiene(respuesta: str, caso: dict) -> tuple[float, str]:
     claves = caso["claves"]
@@ -154,95 +137,13 @@ def evaluar_caso(respuesta: str, caso: dict) -> tuple[float, str]:
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MÉTRICAS PHOENIX
-# Se llama desde el backend — no hay CORS porque es server-to-server.
-# ─────────────────────────────────────────────────────────────────────────────
-
-def obtener_metricas_phoenix(t_inicio_epoch: float) -> dict:
-    """
-    Consulta la API REST de Phoenix (server-to-server, sin CORS) y calcula
-    promedios de los spans RAG_REAL generados desde t_inicio_epoch.
-    Devuelve un dict listo para ser usado en MetricasPhoenix.
-
-    NOTA: La URL correcta en arize-phoenix >= 4.x es:
-      GET /v1/projects/{project_identifier}/spans
-    El project_identifier va en la URL, no como query param.
-    """
-    try:
-        resp = requests.get(
-            f"{PHOENIX_URL}/v1/projects/tesis-epn-rag/spans",
-            params={"limit": 200},
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            return {"disponible": False}
-
-        spans = resp.json().get("data", [])
-        if not spans:
-            return {"disponible": False}
-
-        spans_eval = []
-        for span in spans:
-            attrs     = span.get("attributes", {})
-            start_raw = span.get("start_time", "")
-            if not start_raw:
-                continue
-            try:
-                if isinstance(start_raw, str):
-                    dt = datetime.fromisoformat(start_raw.replace("Z", "+00:00"))
-                    span_epoch = dt.timestamp()
-                else:
-                    span_epoch = float(start_raw) / 1e9
-                if span_epoch < t_inicio_epoch:
-                    continue
-            except Exception:
-                continue
-
-            if attrs.get("tipo") == "RAG_REAL":
-                spans_eval.append(attrs)
-
-        if not spans_eval:
-            return {
-                "disponible": True,
-                "nota": "No se encontraron spans RAG_REAL en esta sesión (todas las respuestas vinieron del caché).",
-            }
-
-        def prom(key):
-            vals = [float(s[key]) for s in spans_eval if key in s and s[key] is not None]
-            return round(sum(vals) / len(vals), 1) if vals else None
-
-        lat_total = prom("latencia_total_ms")
-        lat_llm   = prom("latencia_llm_ms")
-        lat_ret   = round((lat_total or 0) - (lat_llm or 0), 1) if lat_total and lat_llm else None
-
-        return {
-            "disponible":             True,
-            "spans_analizados":       len(spans_eval),
-            "latencia_total_ms_avg":  lat_total,
-            "latencia_llm_ms_avg":    lat_llm,
-            "latencia_retrieval_avg": lat_ret,
-            "fragmentos_usados_avg":  prom("fragmentos_usados"),
-            "k_retrieval":            spans_eval[0].get("k_retrieval"),
-            "umbral_relevancia":      spans_eval[0].get("umbral_relevancia"),
-            "hyde_aplicado":          spans_eval[0].get("hyde_aplicado"),
-            "modelo_llm":             spans_eval[0].get("modelo_llm"),
-            "modelo_embed":           spans_eval[0].get("modelo_embed"),
-        }
-
-    except Exception as e:
-        return {"disponible": False, "nota": str(e)}
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPER INTERNO — construye resumen + score global a partir de resultados
-# ─────────────────────────────────────────────────────────────────────────────
-
 def _construir_reporte(
     experimento: str,
     motor: str,
     resultados: list[dict],
     t_inicio: float,
 ) -> dict:
-    """Calcula resumen por grupo, score global y métricas Phoenix."""
+    """Calcula resumen por grupo y score global."""
     scores_por_grupo: dict[str, list[float]] = {}
     for r in resultados:
         scores_por_grupo.setdefault(r["grupo"], []).append(r["score"])
@@ -267,9 +168,6 @@ def _construir_reporte(
         "total":   len(resultados),
     }
 
-    # Esperar a que OpenTelemetry haga flush del batch de spans antes de consultar Phoenix
-    time.sleep(2)
-    metricas_phoenix = obtener_metricas_phoenix(t_inicio)
     duracion = round(time.time() - t_inicio, 1)
 
     return {
@@ -281,13 +179,8 @@ def _construir_reporte(
         "resumen_por_grupo":  resumen_por_grupo,
         "score_global":       score_global,
         "conteo_global":      conteo_global,
-        "metricas_phoenix":   metricas_phoenix,
     }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ORQUESTADOR CLÁSICO (sin streaming — mantiene compatibilidad)
-# ─────────────────────────────────────────────────────────────────────────────
 
 def ejecutar_evaluacion(experimento: str, casos: list[dict]) -> dict:
     """
@@ -326,28 +219,11 @@ def ejecutar_evaluacion(experimento: str, casos: list[dict]) -> dict:
     return _construir_reporte(experimento, motor, resultados, t_inicio)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-# ORQUESTADOR CON STREAMING — genera eventos de progreso caso a caso
-# ─────────────────────────────────────────────────────────────────────────────
-
 def ejecutar_evaluacion_stream(
     experimento: str,
     casos: list[dict],
 ) -> Generator[dict, None, None]:
-    """
-    Generador que procesa los casos uno a uno y yielda dicts con el progreso.
-
-    Formato de cada evento yieldeado:
-      {"tipo": "progreso",   "caso_actual": N, "total_casos": T,
-       "porcentaje": P, "resultado": {...}}          ← tras cada caso
-      {"tipo": "completado", "caso_actual": T, "total_casos": T,
-       "porcentaje": 100, "reporte_final": {...}}    ← al terminar
-      {"tipo": "error",      "mensaje_error": "..."}  ← si hay excepción fatal
-
-    El frontend consume estos eventos vía Server-Sent Events (SSE).
-    La comunicación con Phoenix se hace server-to-server desde este servicio,
-    por lo que NO hay restricciones CORS.
-    """
+    """Generador que procesa los casos uno a uno y yielda dicts con el progreso."""
     t_inicio      = time.time()
     motor         = obtener_motor_activo()
     casos_activos = [c for c in casos if c.get("habilitado", True)]

@@ -57,13 +57,7 @@ class ConfiguracionRAG(Base):
 
     id = Column(Integer, primary_key=True, default=1)
 
-    # ── ALTO IMPACTO — Chunking semántico ─────────────────────────────────────
-    # Percentil de corte del SemanticChunker (50–95).
-    # A mayor valor → chunks más pequeños y precisos.
-    # Cambiar este valor OBLIGA a eliminar vectores y reindexar.
-    breakpoint_threshold_amount = Column(Integer, default=75)
-
-    # ── ALTO IMPACTO — Retrieval ──────────────────────────────────────────────
+    # ── PARÁMETROS CON IMPACTO DEMOSTRABLE ────────────────────────────────────
     # Score mínimo de similitud coseno para que un fragmento pase al contexto.
     umbral_relevancia_local = Column(Float, default=0.15)
     umbral_relevancia_cloud = Column(Float, default=0.30)
@@ -72,32 +66,9 @@ class ConfiguracionRAG(Base):
     rag_k_local = Column(Integer, default=10)
     rag_k_cloud = Column(Integer, default=8)
 
-    # ── MEDIO IMPACTO — Tokens de respuesta ───────────────────────────────────
-    num_tokens_normal_local = Column(Integer, default=350)
-    num_tokens_lista_local  = Column(Integer, default=750)
-    num_tokens_normal_cloud = Column(Integer, default=700)
-    num_tokens_lista_cloud  = Column(Integer, default=1400)
-
-    # ── MEDIO IMPACTO — Umbrales de caché L2 ──────────────────────────────────
-    cache_threshold_ll = Column(Float, default=0.82)   # modo local:local
-    cache_threshold_lc = Column(Float, default=0.83)   # modo local:cloud
-    cache_threshold_cc = Column(Float, default=0.88)   # modo cloud:cloud
-    umbral_similitud   = Column(Float, default=0.02)   # margen global de hit
-
-    # ── BAJO IMPACTO — Sampling del LLM local (Ollama) ───────────────────────
-    repeat_penalty   = Column(Float,   default=1.3)
-    top_k_llm        = Column(Integer, default=10)
-    top_p_llm        = Column(Float,   default=0.5)
-    hyde_num_predict = Column(Integer, default=120)
-
-    # ── BAJO IMPACTO — Caché L1 RAM ───────────────────────────────────────────
-    max_l1_entries = Column(Integer, default=500)
-
-    # ── PROMPTS EDITABLES ─────────────────────────────────────────────────────
+    # ── PROMPT PRINCIPAL ──────────────────────────────────────────────────────
     # NULL = usar el prompt hardcodeado por defecto en rag_service.py.
-    # Compatibilidad: columnas nullable → filas existentes en BD no se rompen.
     prompt_principal = Column(Text, nullable=True, default=None)
-    prompt_hyde      = Column(Text, nullable=True, default=None)
 
     # ── Auditoría ─────────────────────────────────────────────────────────────
     fecha_actualizacion = Column(

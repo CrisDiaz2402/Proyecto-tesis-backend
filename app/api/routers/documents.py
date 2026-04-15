@@ -5,8 +5,8 @@ from fastapi import APIRouter, Depends, HTTPException, UploadFile, File, Form, Q
 from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 
-from app.db.database import SessionLocal
 from app.db import models
+from app.db.deps import get_db
 from app.schemas.schemas import DocumentoOut, DocumentoUploadResponse, AccionGlobalResponse
 from app.services.rag_service import procesar_y_guardar_documento, eliminar_coleccion_chroma, eliminar_todos_los_vectores_chroma
 from app.services.cache_service import limpiar_cache, limpiar_cache_por_documento
@@ -19,13 +19,6 @@ from app.core.config import (
 )
 
 router = APIRouter(prefix="/api/documents", tags=["documents"])
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPER: lista de motores a procesar según el parámetro recibido

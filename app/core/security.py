@@ -9,8 +9,8 @@ from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from sqlalchemy.orm import Session
 
 from app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
-from app.db.database import SessionLocal
 from app.db import models
+from app.db.deps import get_db
 
 # ── Esquema de extracción del token desde el header Authorization: Bearer ─────
 bearer_scheme = HTTPBearer()
@@ -52,12 +52,6 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
 # DEPENDENCIA — Protege rutas que requieren autenticación
 # ─────────────────────────────────────────────────────────────────────────────
 
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),

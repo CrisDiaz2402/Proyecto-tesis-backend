@@ -1,25 +1,17 @@
 # scripts/evaluar_local.py
-# ─────────────────────────────────────────────────────────────────────────────
-# Evaluador de parámetros RAG — Sin RAGAS, sin LLM juez externo.
-#
-# Estrategia de scoring:
-#   Cada caso tiene un tipo de verificación declarado:
-#   - "contiene"      : la respuesta debe incluir todas las claves del ground truth
-#   - "no_contiene"   : la respuesta NO debe mencionar ninguna clave (TN / fuera dominio)
-#   - "corrige"       : la respuesta debe corregir el dato falso de la pregunta
-#   - "no_alucina"    : la respuesta debe decir "no existe" o similar, nunca inventar
-#
-#   Scoring: PASS (1.0) / PARCIAL (0.5) / FAIL (0.0)
-#   Score parcial cuando se cumple parte de las condiciones (ej: contiene algunos datos)
-#
-# Métricas Phoenix:
-#   Se extraen via la API REST de Phoenix (puerto 6006) una vez terminadas las consultas.
-#   Si Phoenix no está disponible, se omite esa sección sin romper el script.
-#
-# Salida:
-#   - Consola: resultados en tiempo real + tabla resumen
-#   - CSV: resultados_YYYY-MM-DD_HH-MM.csv (para comparar experimentos)
-# ─────────────────────────────────────────────────────────────────────────────
+"""
+Evaluador de parámetros RAG.
+
+Estrategia de scoring:
+  - "contiene"      : la respuesta debe incluir todas las claves del ground truth
+  - "no_contiene"   : la respuesta NO debe mencionar ninguna clave
+  - "corrige"       : la respuesta debe corregir el dato falso de la pregunta
+  - "no_alucina"    : la respuesta debe decir "no existe" o similar, nunca inventar
+
+  Scoring: PASS (1.0) / PARCIAL (0.5) / FAIL (0.0)
+
+Salida: resultados_YYYY-MM-DD_HH-MM.csv
+"""
 
 import sys
 import os
@@ -31,17 +23,11 @@ import requests
 from datetime import datetime
 from difflib import SequenceMatcher
 import pandas as pd
-import phoenix as px
-
-# ─────────────────────────────────────────────────────────────────────────────
-# CONFIGURACIÓN — ajustar según el experimento que se quiere medir
-# ─────────────────────────────────────────────────────────────────────────────
 
 FASTAPI_URL  = "http://localhost:8000/api/chat/consultar"
-PHOENIX_URL  = "http://localhost:6006"
-MOTOR        = "local:local"          # cambiar a "local:cloud" o "cloud:cloud"
-TIMEOUT_SEG  = 180                    # segundos máx por pregunta
-EXPERIMENTO  = "baseline"             # etiqueta libre: "hyde_off", "k8", "umbral_0.10", etc.
+MOTOR        = "local:local"
+TIMEOUT_SEG  = 180
+EXPERIMENTO  = "baseline"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # SET DE CASOS DE EVALUACIÓN
@@ -431,27 +417,11 @@ def preguntar_api(pregunta: str) -> tuple[str, float]:
 # Se filtran los spans del proyecto "tesis-epn-rag" generados en esta sesión.
 # ─────────────────────────────────────────────────────────────────────────────
 
+# ─── FUNCIÓN ELIMINADA ─────────────────────────────────────────────────────────────────
+# TODO: ELIMINAR - Phoenix ya no se usa en el stack
 def obtener_metricas_phoenix(t_inicio_epoch: float) -> dict:
-    """
-    Consulta la API REST de Phoenix y extrae métricas promedio de los spans
-    generados desde t_inicio_epoch.
-    Devuelve dict con promedios o None si Phoenix no está disponible.
-    """
-    try:
-        # Phoenix API: GET /v1/spans devuelve lista de spans en formato JSON
-        resp = requests.get(
-            f"{PHOENIX_URL}/v1/spans",
-            params={"project_name": "tesis-epn-rag", "limit": 200},
-            timeout=10,
-        )
-        if resp.status_code != 200:
-            return None
-
-        spans = resp.json().get("data", [])
-        if not spans:
-            return None
-
-        # Filtrar spans del tipo RAG_REAL generados durante esta ejecución
+    """OBSOLETO: Phoenix fue eliminado del stack. Retorna None siempre."""
+    return None
         spans_eval = []
         for span in spans:
             attrs = span.get("attributes", {})
@@ -506,29 +476,16 @@ def obtener_metricas_phoenix(t_inicio_epoch: float) -> dict:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def obtener_jwt(username: str = "admin", password: str = "admin123") -> str:
-    """
-    Obtiene el JWT del backend. Ajustar username/password según tu sistema.
-    Si falla, el script continúa sin token (útil si el endpoint no requiere auth).
-    """
+    """Obtiene el JWT del backend."""
     try:
-        resp = requests.post(
-            "http://localhost:8000/api/auth/login",
-            json={"username": username, "password": password},
-            timeout=10,
-        )
-        if resp.status_code == 200:
-            token = resp.json().get("access_token", "")
-            print(ok(f"[AUTH] JWT obtenido correctamente"))
-            return token
-        print(warn(f"[AUTH] Login falló ({resp.status_code}). Continuando sin token."))
-        return ""
-    except Exception as e:
-        print(warn(f"[AUTH] No se pudo conectar para obtener JWT: {e}"))
-        return ""
-
-# ─────────────────────────────────────────────────────────────────────────────
-# EXPORTAR CSV
-# ─────────────────────────────────────────────────────────────────────────────
+            resp = requests.post(
+                "http://localhost:8000/api/auth/login",
+                json={"username": username, "password": password},
+                timeout=10,
+            )
+            if resp.status_code == 200:
+                token = resp.json().get("access_token", "")
+                return token
 
 def exportar_csv(resultados: list, nombre_archivo: str) -> None:
     campos = [
@@ -544,37 +501,6 @@ def exportar_csv(resultados: list, nombre_archivo: str) -> None:
             writer.writerow({k: r.get(k, "") for k in campos})
     print(ok(f"\n[CSV] Resultados exportados a: {nombre_archivo}"))
 
-# ─────────────────────────────────────────────────────────────────────────────
-# EXPORTAR TRAZAS COMPLETAS DE PHOENIX
-# ─────────────────────────────────────────────────────────────────────────────
-
-def exportar_trazas_phoenix(ts_inicio_str: str) -> None:
-    """Extrae toda la telemetría detallada de Phoenix y la guarda en un CSV."""
-    try:
-        print(bold("\n[PHOENIX] Conectando a Phoenix para extraer la telemetría completa..."))
-        
-        # Conectar al cliente local
-        client = px.Client(endpoint=PHOENIX_URL)
-        
-        # Extraer los datos a un DataFrame
-        # Nota: Si tu versión de Phoenix es muy reciente, podría requerir:
-        # df = client.spans.get_spans_dataframe(project_identifier="tesis-epn-rag")
-        df = client.get_spans_dataframe(project_name="tesis-epn-rag")
-        
-        # Crear nombre de archivo combinando tu configuración
-        nombre_archivo = f"telemetria_{EXPERIMENTO}_{MOTOR.replace(':', '-')}_{ts_inicio_str}.csv"
-        
-        # Guardar como CSV
-        df.to_csv(nombre_archivo, index=False)
-        print(ok(f"[PHOENIX] ✓ Telemetría exportada exitosamente a: {nombre_archivo}"))
-        
-    except Exception as e:
-        print(fail(f"[PHOENIX] ✗ Error al exportar trazas: {e}"))
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MAIN
-# ─────────────────────────────────────────────────────────────────────────────
-
 def main():
     global JWT_TOKEN
 
@@ -588,7 +514,6 @@ def main():
     print(f"  Experimento: {bold(EXPERIMENTO)}")
     print(f"  Preguntas  : {TOTAL}")
     print(f"  FastAPI    : {FASTAPI_URL}")
-    print(f"  Phoenix    : {PHOENIX_URL}")
     print(bold("═" * 70) + "\n")
 
     # Auth
@@ -725,10 +650,10 @@ def main():
         f"{ts_inicio.strftime('%Y-%m-%d_%H-%M')}.csv"
     )
     exportar_csv(resultados, nombre_csv)
-    # NUEVO: Exportar también las trazas de Phoenix
-    exportar_trazas_phoenix(ts_inicio.strftime('%Y-%m-%d_%H-%M'))
+    # TODO: ELIMINAR - Exportar trazas Phoenix (función no implementada)
+    # exportar_trazas_phoenix(ts_inicio.strftime('%Y-%m-%d_%H-%M'))
 
-    # ── Fase 5: Guía de interpretación ────────────────────────────────────────
+
     print(bold("\n═" * 70))
     print(bold("  GUÍA DE INTERPRETACIÓN"))
     print(bold("═" * 70))

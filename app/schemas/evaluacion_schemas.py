@@ -52,21 +52,6 @@ class ResumenGrupo(BaseModel):
         populate_by_name = True
 
 
-class MetricasPhoenix(BaseModel):
-    disponible:             bool
-    spans_analizados:       Optional[int]   = None
-    latencia_total_ms_avg:  Optional[float] = None
-    latencia_llm_ms_avg:    Optional[float] = None
-    latencia_retrieval_avg: Optional[float] = None
-    fragmentos_usados_avg:  Optional[float] = None
-    k_retrieval:            Optional[int]   = None
-    umbral_relevancia:      Optional[float] = None
-    hyde_aplicado:          Optional[bool]  = None
-    modelo_llm:             Optional[str]   = None
-    modelo_embed:           Optional[str]   = None
-    nota:                   Optional[str]   = None
-
-
 class ConteoGlobal(BaseModel):
     pass_:   int
     parcial: int
@@ -86,7 +71,6 @@ class ResultadoEvaluacion(BaseModel):
     resumen_por_grupo:  dict[str, dict]
     score_global:       float
     conteo_global:      dict
-    metricas_phoenix:   MetricasPhoenix
 
 
 # ─────────────────────────────────────────────────────────────────────────────

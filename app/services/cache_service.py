@@ -10,7 +10,7 @@ from app.core.config import (
     EMBED_MODEL_LOCAL, EMBED_MODEL_CLOUD, GOOGLE_API_KEY,
 )
 # umbral_similitud ya NO viene de config.py — se lee dinámicamente desde la BD
-from app.services.rag_params_service import get_params
+from app.services.rag_service import UMBRAL_SIMILITUD
 
 # ─────────────────────────────────────────────────────────────────────────────
 # MAPA COMPLETO DE COMBINACIONES DE CACHÉ
@@ -146,8 +146,8 @@ def buscar_en_cache(pregunta: str, motor_vectores: str, motor_llm: str) -> str |
         if cache_db._collection.count() == 0:
             return None
 
-        # Leer umbral dinámico desde la BD
-        umbral_similitud = get_params().get("umbral_similitud", 0.02)
+        # Umbral hardcodeado como constante importada
+        umbral_similitud = UMBRAL_SIMILITUD
 
         resultados = cache_db.similarity_search_with_relevance_scores(pregunta, k=1)
         if not resultados:

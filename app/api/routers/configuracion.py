@@ -3,9 +3,11 @@ from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 
-from app.db.database import SessionLocal
 from app.db import models
+from app.db.deps import get_db
 from app.core.security import get_current_user
+from app.core.constants import MODO_LABELS, COMBINACIONES_INVALIDAS
+from app.core.exceptions import CombinacionInvalidaError, ConfiguracionError
 from app.services.config_service import obtener_configuracion, cambiar_configuracion
 
 router = APIRouter(prefix="/api/config", tags=["configuracion"])
@@ -19,13 +21,6 @@ class ConfigResponse(BaseModel):
 class ConfigRequest(BaseModel):
     motor_vectores: str
     motor_llm: str
-
-def get_db():
-    db = SessionLocal()
-    try:
-        yield db
-    finally:
-        db.close()
 
 # ── Endpoints ─────────────────────────────────────────────────────────────────
 
@@ -47,20 +42,27 @@ def update_motor(
 ):
     """Cambia la combinación de motores del Avatar."""
     try:
+        # Validar combinación antes de aplicar
+        combinacion = (request.motor_vectores, request.motor_llm)
+        if combinacion in COMBINACIONES_INVALIDAS:
+            raise CombinacionInvalidaError(request.motor_vectores, request.motor_llm)
+        
         cambiar_configuracion(
             motor_vectores=request.motor_vectores,
             motor_llm=request.motor_llm,
         )
-        etiquetas = {
-            ("local",  "local"):  "Todo Local (Ollama + Ollama)",
-            ("cloud",  "cloud"):  "Todo Nube (Gemini + Gemini)",
-            ("local",  "cloud"):  "Vectores Local + LLM Nube",
-            ("cloud",  "local"):  "Vectores Nube + LLM Local",
-        }
-        clave = (request.motor_vectores, request.motor_llm)
-        etiqueta = etiquetas.get(clave, f"{request.motor_vectores} / {request.motor_llm}")
+        
+        # Usar etiquetas centralizadas
+        etiqueta = MODO_LABELS.get(
+            combinacion, 
+            f"{request.motor_vectores} / {request.motor_llm}"
+        )
+        
         return {"ok": True, "mensaje": f"Modo activado: {etiqueta}"}
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
+    
+    except CombinacionInvalidaError as e:
+        raise HTTPException(status_code=400, detail=e.message)
+    except ConfiguracionError as e:
+        raise HTTPException(status_code=400, detail=e.message)
     except Exception as e:
         raise HTTPException(status_code=500, detail="Error interno al guardar la configuración")

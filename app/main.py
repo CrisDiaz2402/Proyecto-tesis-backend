@@ -12,12 +12,6 @@ from app.db import models
 from app.api.routers import documents, chat, usuarios, auth, configuracion
 from app.api.routers import rag_params    # parámetros RAG editables
 from app.api.routers import evaluacion    # evaluador RAG
-from app.api.routers import monitor       # ← NUEVO: monitoreo de concurrencia
-
-# ── PHOENIX TRACING ───────────────────────────────────────────────────────────
-import phoenix as px
-px.launch_app()
-# ─────────────────────────────────────────────────────────────────────────────
 
 # Inicializar Base de Datos
 models.Base.metadata.create_all(bind=engine)
@@ -48,7 +42,6 @@ app.include_router(usuarios.router)
 app.include_router(configuracion.router)
 app.include_router(rag_params.router)
 app.include_router(evaluacion.router)
-app.include_router(monitor.router)    # ← NUEVO
 
 # ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
@@ -61,76 +54,67 @@ async def health_check():
     }
 
 
-# ── PRECALENTAMIENTO EN STARTUP ───────────────────────────────────────────────
+# ── SEED AUTOMÁTICO AL STARTUP ───────────────────────────────────────────────
 @app.on_event("startup")
-async def precalentar_sistema():
+async def inicializar_sistema():
     """
-    Al iniciar el servidor:
-      1. Migra los prompts NULL en BD al texto hardcodeado por defecto.
-      2. Pre-carga el modelo LLM local en memoria (Ollama).
-      3. Pre-popula el caché con las preguntas más frecuentes del sistema.
+    Seed automático al arranque:
+      1. Crea el usuario admin si no existe.
+      2. Crea la configuración RAG por defecto si no existe.
+      3. Precalienta el modelo local (solo si motor_llm = local).
     """
-    from app.services.rag_params_service import (
-        _get_or_create,
-        PROMPT_PRINCIPAL_DEFAULT,
-        PROMPT_HYDE_DEFAULT,
-    )
     from app.db.database import SessionLocal
-    from app.services.rag_service import consultar_base_conocimiento
-    from app.services.config_service import obtener_motor_activo, obtener_configuracion
+    from app.db import models
+    from app.core.security import get_password_hash
+    from app.services.rag_params_service import _get_or_create
+    from app.services.config_service import obtener_configuracion
 
-    # ── 1. MIGRACIÓN DE PROMPTS NULL ──────────────────────────────────────────
+    db = SessionLocal()
     try:
-        db = SessionLocal()
-        config = _get_or_create(db)
-        actualizado = False
+        # ── 1. USUARIO ADMIN POR DEFECTO ─────────────────────────────────────
+        admin_existente = db.query(models.Usuario).filter(
+            models.Usuario.username == "admin"
+        ).first()
 
-        if not config.prompt_principal:
-            config.prompt_principal = PROMPT_PRINCIPAL_DEFAULT
-            actualizado = True
-
-        if not config.prompt_hyde:
-            config.prompt_hyde = PROMPT_HYDE_DEFAULT
-            actualizado = True
-
-        if actualizado:
+        if not admin_existente:
+            admin = models.Usuario(
+                username="admin",
+                hashed_password=get_password_hash("admin123"),
+                rol="Admin",
+            )
+            db.add(admin)
             db.commit()
-            print("[STARTUP] ✅ Prompts guardados en BD (migración desde NULL completada).")
+            print("[STARTUP] ✅ Usuario admin creado (usuario: admin / contraseña: admin123).")
         else:
-            print("[STARTUP] ✅ Prompts ya presentes en BD, no requieren migración.")
+            print("[STARTUP] ✅ Usuario admin ya existe.")
 
-        db.close()
+        # ── 2. CONFIGURACIÓN RAG POR DEFECTO ─────────────────────────────────
+        config = _get_or_create(db)
+        # _get_or_create ya maneja la creación con todos los defaults si no existe
+        print(f"[STARTUP] ✅ Configuración RAG lista (id={config.id}).")
+
     except Exception as e:
-        print(f"[STARTUP] ⚠️  Error al migrar prompts en BD: {e}")
-        print("[STARTUP]    El servidor continúa iniciando normalmente.")
+        print(f"[STARTUP] ⚠️  Error en seed inicial: {e}")
+    finally:
+        db.close()
 
-    # ── 2 y 3. PRECALENTAMIENTO DEL SISTEMA RAG ───────────────────────────────
-    motor_activo = obtener_motor_activo()
-    config_motor = obtener_configuracion()
-    motor_llm    = config_motor.get("motor_llm", "local")
-
-    if motor_llm == "cloud":
-        print(f"[STARTUP] ⏭️  Precalentamiento omitido — motor LLM activo es cloud ({motor_activo}).")
-        return
-
-    print(f"[STARTUP] 🔥 Iniciando precalentamiento del sistema RAG (motor: {motor_activo})...")
-
-    preguntas_frecuentes = [
-        "¿Cuántos créditos necesito para graduarme?",
-        "¿Cuántos semestres dura la carrera?",
-        "¿Cuáles son los requisitos para graduarme?",
-        "¿Cuántas materias tiene la carrera?",
-        "¿Cuántas horas de prácticas laborales necesito?",
-    ]
-
+    # ── 3. PRECALENTAMIENTO DEL MODELO LOCAL ─────────────────────────────────
     try:
-        loop = asyncio.get_event_loop()
-        for pregunta in preguntas_frecuentes:
+        from app.services.config_service import obtener_motor_activo
+        from app.services.rag_service import consultar_base_conocimiento
+        import asyncio
+
+        config_motor = obtener_configuracion()
+        if config_motor.get("motor_llm") == "local":
+            motor_activo = obtener_motor_activo()
+            print(f"[STARTUP] 🔥 Precalentando modelo local (motor: {motor_activo})...")
+            loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
-                lambda p=pregunta: consultar_base_conocimiento(p, motor=motor_activo),
+                lambda: consultar_base_conocimiento("¿Cuántos créditos necesito para graduarme?", motor=motor_activo),
             )
-        print(f"[STARTUP] ✅ Precalentamiento completado — {len(preguntas_frecuentes)} preguntas procesadas.")
+            print("[STARTUP] ✅ Precalentamiento completado.")
+        else:
+            print("[STARTUP] ⏭️  Motor cloud activo — precalentamiento omitido.")
     except Exception as e:
         print(f"[STARTUP] ⚠️  Precalentamiento omitido: {e}")
-        print("[STARTUP]    El servidor continúa iniciando normalmente.")
