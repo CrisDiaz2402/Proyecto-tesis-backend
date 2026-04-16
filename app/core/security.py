@@ -86,3 +86,33 @@ def get_current_user(
         raise credenciales_exception
 
     return usuario
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VALIDACIÓN JWT PARA WEBSOCKET
+# ─────────────────────────────────────────────────────────────────────────────
+
+def validate_token_ws(token: str, db: Session) -> models.Usuario:
+    """
+    Valida un JWT para conexiones WebSocket.
+    Extrae el payload, verifica el sub (user_id) y consulta la BD.
+    Lanza HTTPException(401) si el token es inválido o el usuario no existe.
+    """
+    credenciales_exception = HTTPException(
+        status_code=status.HTTP_401_UNAUTHORIZED,
+        detail="Token WebSocket inválido o expirado.",
+    )
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+        user_id: str = payload.get("sub")
+        if user_id is None:
+            raise credenciales_exception
+    except JWTError:
+        raise credenciales_exception
+
+    usuario = db.query(models.Usuario).filter(models.Usuario.id == user_id).first()
+    if usuario is None:
+        raise credenciales_exception
+
+    return usuario

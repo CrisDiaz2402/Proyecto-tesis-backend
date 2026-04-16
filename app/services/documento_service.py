@@ -91,7 +91,7 @@ class DocumentoService:
         """
         Elimina documento completamente:
         1. Archivo físico
-        2. Vectores de ChromaDB/Qdrant
+        2. Vectores de pgvector
         3. Cache asociado
         4. Registro de BD
         """
@@ -104,9 +104,8 @@ class DocumentoService:
         archivos_eliminados = self._eliminar_archivos_fisicos(documento, motor)
         
         # Limpiar vectores RAG
-        # TODO: usar vector_service cuando se migre a Qdrant
-        from app.services.rag_service import eliminar_coleccion_chroma
-        eliminar_coleccion_chroma(documento.nombre_archivo, motor)
+        from app.services.rag_service import eliminar_coleccion
+        eliminar_coleccion(documento.nombre_archivo, motor)
         
         # Limpiar cache
         limpiar_cache_por_documento(documento.nombre_archivo, motor)

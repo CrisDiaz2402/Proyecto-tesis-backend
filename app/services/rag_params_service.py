@@ -60,13 +60,13 @@ PARAM_LIMITS: dict[str, dict[str, Any]] = {
         "min": 2, "max": 20, "type": "int",
         "default": 10,
         "label": "K local (fragmentos a recuperar)",
-        "descripcion": "Número de fragmentos a recuperar de ChromaDB local.",
+        "descripcion": "Número de fragmentos a recuperar de pgvector local.",
     },
     "rag_k_cloud": {
         "min": 2, "max": 15, "type": "int",
         "default": 8,
         "label": "K cloud (fragmentos a recuperar)",
-        "descripcion": "Número de fragmentos a recuperar de ChromaDB cloud.",
+        "descripcion": "Número de fragmentos a recuperar de pgvector cloud.",
     },
 }
 

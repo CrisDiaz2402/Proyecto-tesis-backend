@@ -18,9 +18,9 @@ MOTOR_LABELS = {
 
 # Combinaciones de motor vectorial + LLM
 MODO_LABELS = {
-    ("local", "local"):  "Todo Local (Ollama + Ollama)",
+    ("local", "local"):  "Todo Local (vLLM + sentence-transformers)",
     ("cloud", "cloud"):  "Todo Nube (Gemini + Gemini)",
-    ("local", "cloud"):  "Vectores Local + LLM Nube",
+    ("local", "cloud"):  "Vectores Local + LLM Nube (Gemini)",
 }
 
 # Validaciones
@@ -29,7 +29,7 @@ COMBINACIONES_INVALIDAS: FrozenSet[tuple] = frozenset({
     ("cloud", "local"),  # Vectores nube + LLM local no soportado
 })
 
-# ── CONFIGURACION FUTURA vLLM+Qdrant ────────────────────────────────────────────
+# ── CONFIGURACION FUTURA ────────────────────────────────────────────────
 # En la migración: un solo motor, configuración simplificada
 
 # MOTOR_QDRANT_URL = "http://localhost:6333"

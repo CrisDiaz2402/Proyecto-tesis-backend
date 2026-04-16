@@ -3,8 +3,8 @@
 Configuración de infraestructura y constantes globales.
 
 IMPORTANTE — Parámetros RAG:
-  Los valores de UMBRAL_RELEVANCIA_*, RAG_K_*, NUM_TOKENS_*, CACHE_THRESHOLD_*
-  y UMBRAL_SIMILITUD que aparecen aquí son DEFAULTS DE FALLBACK únicamente.
+  Los valores de UMBRAL_RELEVANCIA_*, RAG_K_* que aparecen aquí son
+  DEFAULTS DE FALLBACK únicamente.
   La fuente de verdad en runtime es la tabla `configuracion_rag` de la BD,
   gestionada por app/services/rag_params_service.py.
   Estos valores solo se usan si la BD no está disponible en el arranque.
@@ -19,6 +19,16 @@ load_dotenv()
 # ─── 1. INFRAESTRUCTURA ────────────────────────────────────────────────────────
 DATABASE_URL   = os.getenv("DATABASE_URL")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
+ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
+
+# Servicios de infraestructura
+VLLM_BASE_URL = os.getenv("VLLM_BASE_URL", "http://localhost:8001/v1")
+QDRANT_URL    = os.getenv("QDRANT_URL", "http://localhost:6333")
+REDIS_URL     = os.getenv("REDIS_URL", "redis://localhost:6379")
+
+# Colecciones Qdrant
+QDRANT_COLLECTION_LOCAL = os.getenv("QDRANT_COLLECTION_LOCAL", "documentos_local")
+QDRANT_COLLECTION_CLOUD = os.getenv("QDRANT_COLLECTION_CLOUD", "documentos_cloud")
 
 # Modelos IA
 LLM_MODEL_LOCAL   = os.getenv("LLM_MODEL_LOCAL")
@@ -32,40 +42,18 @@ SECRET_KEY                  = os.getenv("SECRET_KEY")
 ALGORITHM                   = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "480"))
 
+# Dimensión de embeddings (debe coincidir con el modelo usado)
+EMBED_DIMENSION_LOCAL = int(os.getenv("EMBED_DIMENSION_LOCAL", "384"))
+EMBED_DIMENSION_CLOUD = int(os.getenv("EMBED_DIMENSION_CLOUD", "768"))
+
 # ─── 2. RUTAS DE ALMACENAMIENTO ────────────────────────────────────────────────
 
 # Documentos físicos
 DOCUMENTS_DIR_LOCAL = Path(os.getenv("DOCUMENTS_DIR_LOCAL", "./documents_local"))
 DOCUMENTS_DIR_CLOUD = Path(os.getenv("DOCUMENTS_DIR_CLOUD", "./documents_cloud"))
 
-# Bases de datos vectoriales (ChromaDB)
-VECTOR_STORE_DIR_LOCAL = Path(os.getenv("VECTOR_STORE_DIR_LOCAL", "./vector_store_local"))
-VECTOR_STORE_DIR_CLOUD = Path(os.getenv("VECTOR_STORE_DIR_CLOUD", "./vector_store_cloud"))
-
-# Cachés semánticos — uno por combinación de motores activos
-VECTOR_STORE_CACHE_LL = Path(os.getenv("VECTOR_STORE_CACHE_LOCAL_LOCAL", "./cache_ll"))
-VECTOR_STORE_CACHE_LC = Path(os.getenv("VECTOR_STORE_CACHE_LOCAL_CLOUD", "./cache_lc"))
-VECTOR_STORE_CACHE_CC = Path(os.getenv("VECTOR_STORE_CACHE_CLOUD_CLOUD", "./cache_cc"))
-
-# Mapa de cachés: (motor_vectores, motor_llm) → directorio
-_CACHE_DIR_MAP: dict[tuple[str, str], Path] = {
-    ("local", "local"):  VECTOR_STORE_CACHE_LL,
-    ("local", "cloud"):  VECTOR_STORE_CACHE_LC,
-    ("cloud", "cloud"):  VECTOR_STORE_CACHE_CC,
-}
-
-
-def get_cache_dir(motor_vectores: str, motor_llm: str) -> Path:
-    """Devuelve el directorio de caché correcto para la combinación de motores activa."""
-    return _CACHE_DIR_MAP.get((motor_vectores, motor_llm), VECTOR_STORE_CACHE_LL)
-
-
-# Crear todos los directorios necesarios automáticamente
-for _folder in [
-    DOCUMENTS_DIR_LOCAL, DOCUMENTS_DIR_CLOUD,
-    VECTOR_STORE_DIR_LOCAL, VECTOR_STORE_DIR_CLOUD,
-    VECTOR_STORE_CACHE_LL, VECTOR_STORE_CACHE_LC, VECTOR_STORE_CACHE_CC,
-]:
+# Crear directorios necesarios
+for _folder in [DOCUMENTS_DIR_LOCAL, DOCUMENTS_DIR_CLOUD]:
     _folder.mkdir(parents=True, exist_ok=True)
 
 
@@ -76,19 +64,8 @@ for _folder in [
 UMBRAL_RELEVANCIA_LOCAL = 0.15
 UMBRAL_RELEVANCIA_CLOUD = 0.30
 
-CACHE_THRESHOLD_LL = 0.82
-CACHE_THRESHOLD_LC = 0.83
-CACHE_THRESHOLD_CC = 0.88
-
-UMBRAL_SIMILITUD = 0.02
-
 RAG_K_LOCAL = 10
 RAG_K_CLOUD = 8
-
-NUM_TOKENS_NORMAL_LOCAL = 350
-NUM_TOKENS_LISTA_LOCAL  = 750
-NUM_TOKENS_NORMAL_CLOUD = 700
-NUM_TOKENS_LISTA_CLOUD  = 1400
 
 # ─── 7. RESTRICCIONES DE DOCUMENTOS ───────────────────────────────────────────
 MAX_DOCUMENTOS         = 10

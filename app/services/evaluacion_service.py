@@ -136,7 +136,7 @@ def evaluar_caso(respuesta: str, caso: dict) -> tuple[float, str]:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MÉTRICAS PHOENIX
+# MÉTRICAS DE EVALUACIÓN
 def _construir_reporte(
     experimento: str,
     motor: str,

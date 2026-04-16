@@ -66,13 +66,8 @@ class VectorizacionError(RAGError):
     pass
 
 
-class ChromaDBError(VectorizacionError):
-    """Errores específicos de ChromaDB (legacy)."""
-    pass
-
-
-class QdrantError(VectorizacionError):
-    """Errores específicos de Qdrant (futuro)."""
+class PgVectorError(VectorizacionError):
+    """Errores específicos de pgvector."""
     pass
 
 
@@ -84,12 +79,12 @@ class LLMError(RAGError):
 
 
 class OllamaError(LLMError):
-    """Errores específicos de Ollama (legacy)."""
+    """Errores específicos de Ollama."""
     pass
 
 
-class VLLMError(LLMError):
-    """Errores específicos de vLLM (futuro)."""
+class GeminiError(LLMError):
+    """Errores específicos de Google Gemini."""
     pass
 
 

@@ -19,6 +19,8 @@ uploads/*
 
 # --- BASES DE DATOS Y RAG (VECTORES Y CACHÉ) ---
 # Carpetas de Chroma DB (Bases vectoriales)
+redis_data/
+
 vector_store_local/
 vector_store_cloud/
 

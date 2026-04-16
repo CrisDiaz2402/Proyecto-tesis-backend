@@ -56,7 +56,7 @@ def _ejecutar_limpieza(limpieza: dict) -> list[str]:
     Retorna lista de acciones ejecutadas.
     """
     from app.services.cache_service import limpiar_cache
-    from app.services.rag_service import eliminar_todos_los_vectores_chroma
+    from app.services.rag_service import eliminar_todos_los_vectores
 
     acciones: list[str] = []
 
@@ -73,11 +73,11 @@ def _ejecutar_limpieza(limpieza: dict) -> list[str]:
         acciones.append("Caché L2 cloud:cloud limpiado")
 
     if limpieza["limpiar_vectores_local"]:
-        eliminar_todos_los_vectores_chroma("local")
+        eliminar_todos_los_vectores("local")
         acciones.append("Vectores LOCAL eliminados (requiere reindexar)")
 
     if limpieza["limpiar_vectores_cloud"]:
-        eliminar_todos_los_vectores_chroma("cloud")
+        eliminar_todos_los_vectores("cloud")
         acciones.append("Vectores CLOUD eliminados (requiere reindexar)")
 
     return acciones

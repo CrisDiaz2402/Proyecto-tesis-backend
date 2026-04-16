@@ -8,7 +8,7 @@ from sqlalchemy.orm import Session
 from app.db import models
 from app.db.deps import get_db
 from app.schemas.schemas import DocumentoOut, DocumentoUploadResponse, AccionGlobalResponse
-from app.services.rag_service import procesar_y_guardar_documento, eliminar_coleccion_chroma, eliminar_todos_los_vectores_chroma
+from app.services.rag_service import procesar_y_guardar_documento, eliminar_coleccion, eliminar_todos_los_vectores
 from app.services.cache_service import limpiar_cache, limpiar_cache_por_documento
 from app.core.security import get_current_user
 
@@ -175,12 +175,12 @@ def limpiar_solo_cache(
 # ─────────────────────────────────────────────────────────────────────────────
 # ENDPOINT: Limpiar vectores + caché
 #
-# Borra los vectores de ChromaDB y el caché asociado.
+# Borra los vectores de pgvector y el caché asociado.
 # Además actualiza el estado en la BD (los documentos quedan como "No subido"
 # en el motor afectado) para que el frontend refleje la realidad.
 #
-# motor = "local"  → vectores local + cache_ll + cache_lc, BD actualizada
-# motor = "cloud"  → vectores cloud + cache_cc, BD actualizada
+# motor = "local"  → vectores local + caché local, BD actualizada
+# motor = "cloud"  → vectores cloud + caché cloud, BD actualizada
 # motor = "all"    → todo lo anterior en ambos motores
 # ─────────────────────────────────────────────────────────────────────────────
 @router.delete("/vectors/all", response_model=AccionGlobalResponse)
@@ -190,7 +190,7 @@ def limpiar_vectores_y_cache(
     _: models.Usuario = Depends(get_current_user),
 ):
     """
-    Elimina vectores de ChromaDB y el caché asociado.
+    Elimina vectores de pgvector y el caché asociado.
     Actualiza el estado de los documentos en BD para reflejar que
     ya no están vectorizados en el/los motor(es) afectado(s).
     """
@@ -200,8 +200,8 @@ def limpiar_vectores_y_cache(
         for m in motores:
             # 1. Limpiar caché del motor (incluyendo combis mixtas)
             limpiar_cache(motor=m)
-            # 2. Limpiar vectores de ChromaDB
-            eliminar_todos_los_vectores_chroma(motor=m)
+            # 2. Limpiar vectores de pgvector
+            eliminar_todos_los_vectores(motor=m)
             # 3. ⚠️ Actualizar BD — sin esto el frontend muestra estado incorrecto
             docs = db.query(models.Documento).all()
             for doc in docs:
@@ -235,7 +235,7 @@ def procesar_todos_los_documentos(
 
     try:
         limpiar_cache(motor=motor)
-        eliminar_todos_los_vectores_chroma(motor=motor)
+        eliminar_todos_los_vectores(motor=motor)
         procesados = 0
         for doc in documentos:
             ruta_str = doc.ruta_cloud if motor == "cloud" else doc.ruta_local
@@ -278,8 +278,8 @@ def eliminar_todos_los_documentos(
 
         # Limpiar los 3 cachés y vectores de ambos motores
         limpiar_cache(motor="all")
-        eliminar_todos_los_vectores_chroma(motor="local")
-        eliminar_todos_los_vectores_chroma(motor="cloud")
+        eliminar_todos_los_vectores(motor="local")
+        eliminar_todos_los_vectores(motor="cloud")
 
         return AccionGlobalResponse(ok=True, mensaje="Sistema completamente formateado.")
     except Exception as e:
@@ -289,13 +289,13 @@ def eliminar_todos_los_documentos(
 # ─────────────────────────────────────────────────────────────────────────────
 # ENDPOINT: Eliminar documento individual por motor
 #
-# Elimina el archivo físico, los vectores de su colección en ChromaDB,
+# Elimina el archivo físico, los vectores de su colección en pgvector,
 # y el caché de TODAS las combis que usen ese motor_vectores.
 #
 # Ejemplo: eliminar doc en "local" borra:
 #   - archivo en documents_local/
-#   - colección ChromaDB en vector_store_local/
-#   - entradas del doc en cache_ll (local:local) y cache_lc (local:cloud)
+#   - chunks en pgvector (motor=local)
+#   - entradas del doc en caché semántico
 #
 # Si el doc ya no existe en NINGÚN motor → se borra el registro de la BD.
 # ─────────────────────────────────────────────────────────────────────────────
@@ -335,7 +335,7 @@ def eliminar_documento(
         doc.estado_local    = "No subido"
 
     # ── 2. Eliminar colección de vectores del motor ───────────────────────────
-    eliminar_coleccion_chroma(nombre_coleccion, motor=motor)
+    eliminar_coleccion(nombre_coleccion, motor=motor)
 
     # ── 3. Limpiar caché en TODAS las combis que usan ese motor_vectores ───────
     # motor_vectores es igual al motor del documento (local→local, cloud→cloud).

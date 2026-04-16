@@ -24,7 +24,7 @@ Respuesta:"""
 
 
 # ── PROMPTS FUTUROS ──────────────────────────────────────────────────────────
-# Para el stack vLLM + WebSockets: prompts de streaming, sistema, etc.
+# Prompts de streaming, sistema, etc.
 
 PROMPT_SYSTEM_STREAMING = """Eres el Asistente Académico de la EPN especializado en respuestas en tiempo real.
 Responde de forma progresiva y estructurada, manteniendo las reglas estrictas de no alucinación."""
