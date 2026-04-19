@@ -12,35 +12,19 @@ from app.core.config import SECRET_KEY, ALGORITHM, ACCESS_TOKEN_EXPIRE_MINUTES
 from app.db import models
 from app.db.deps import get_db
 
-# ── Esquema de extracción del token desde el header Authorization: Bearer ─────
 bearer_scheme = HTTPBearer()
-
-# ─────────────────────────────────────────────────────────────────────────────
-# BCRYPT — Hashing y verificación de contraseñas
-# ─────────────────────────────────────────────────────────────────────────────
-
 def get_password_hash(password: str) -> str:
-    """Encripta la contraseña usando Bcrypt con un salt aleatorio."""
     pwd_bytes = password.encode('utf-8')
     salt = bcrypt.gensalt()
     hashed_password = bcrypt.hashpw(password=pwd_bytes, salt=salt)
     return hashed_password.decode('utf-8')
 
 def verify_password(plain_password: str, hashed_password: str) -> bool:
-    """Verifica si la contraseña ingresada coincide con la encriptada."""
     password_byte_enc = plain_password.encode('utf-8')
     hashed_password_bytes = hashed_password.encode('utf-8')
     return bcrypt.checkpw(password=password_byte_enc, hashed_password=hashed_password_bytes)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# JWT — Creación y validación de tokens
-# ─────────────────────────────────────────────────────────────────────────────
-
 def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -> str:
-    """
-    Genera un JWT firmado con los datos del usuario.
-    El token expira en ACCESS_TOKEN_EXPIRE_MINUTES minutos por defecto.
-    """
     to_encode = data.copy()
     expire = datetime.now(timezone.utc) + (
         expires_delta if expires_delta else timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES)
@@ -48,25 +32,10 @@ def create_access_token(data: dict, expires_delta: Optional[timedelta] = None) -
     to_encode.update({"exp": expire})
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# DEPENDENCIA — Protege rutas que requieren autenticación
-# ─────────────────────────────────────────────────────────────────────────────
-
-
 def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
     db: Session = Depends(get_db),
 ) -> models.Usuario:
-    """
-    Dependencia reutilizable para proteger cualquier endpoint.
-    Extrae el JWT del header Authorization, lo valida y devuelve el usuario de la BD.
-
-    Uso en un router:
-        from app.core.security import get_current_user
-        @router.get("/ruta-protegida")
-        def ruta(usuario_actual = Depends(get_current_user)):
-            ...
-    """
     credenciales_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="No autenticado o token inválido.",
@@ -87,17 +56,7 @@ def get_current_user(
 
     return usuario
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# VALIDACIÓN JWT PARA WEBSOCKET
-# ─────────────────────────────────────────────────────────────────────────────
-
 def validate_token_ws(token: str, db: Session) -> models.Usuario:
-    """
-    Valida un JWT para conexiones WebSocket.
-    Extrae el payload, verifica el sub (user_id) y consulta la BD.
-    Lanza HTTPException(401) si el token es inválido o el usuario no existe.
-    """
     credenciales_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail="Token WebSocket inválido o expirado.",

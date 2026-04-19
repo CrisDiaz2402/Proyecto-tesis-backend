@@ -7,34 +7,26 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
 
-# Base de datos
 from app.db.database import engine
 from app.db import models
 
-# Enrutadores
 from app.api.routers import documents, chat, usuarios, auth, configuracion
-from app.api.routers import rag_params    # parámetros RAG editables
-from app.api.routers import evaluacion    # evaluador RAG
-from app.api.routers import ws_chat       # WebSocket chat
+from app.api.routers import rag_params  
+from app.api.routers import evaluacion  
+from app.api.routers import ws_chat  
+from app.api.routers import nlu_config
 
-# Inicializar Base de Datos (solo tablas relacionales)
 models.Base.metadata.create_all(bind=engine)
 
 
-# ── LIFESPAN ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """
-    Seed automático al arranque:
-      1. Crea el usuario admin si no existe.
-      2. Crea la configuración RAG por defecto si no existe.
-      3. Precalienta el modelo local (solo si motor_llm = local).
-    """
     from app.db.database import SessionLocal
     from app.db import models
     from app.core.security import get_password_hash
     from app.services.rag_params_service import _get_or_create
     from app.services.config_service import obtener_configuracion
+    from app.services.nlu_config_service import _get_or_create as _get_or_create_nlu
 
     db = SessionLocal()
     try:
@@ -56,6 +48,9 @@ async def lifespan(app: FastAPI):
 
         config = _get_or_create(db)
         print(f"[STARTUP] ✅ Configuración RAG lista (id={config.id}).")
+
+        nlu_config_row = _get_or_create_nlu(db)
+        print(f"[STARTUP] ✅ Configuración NLU lista (id={nlu_config_row.id}).")
 
     except Exception as e:
         print(f"[STARTUP] ⚠️  Error en seed inicial: {e}")
@@ -80,7 +75,7 @@ async def lifespan(app: FastAPI):
             )
             print("[STARTUP] ✅ Precalentamiento completado.")
         else:
-            print("[STARTUP] ⏭️  Motor cloud activo — precalentamiento omitido.")
+            print("[STARTUP] ⏭️  Motor LLM cloud activo (local:cloud) — precalentamiento omitido.")
     except Exception as e:
         print(f"[STARTUP] ⚠️  Precalentamiento omitido: {e}")
 
@@ -88,15 +83,6 @@ async def lifespan(app: FastAPI):
 
     print("[SHUTDOWN] 🛑 Apagando servidor...")
 
-
-# ── MIDDLEWARE: Bypass chequeo de Origin para WebSockets ──────────────────────
-# Starlette valida el header "Origin" en el handshake WebSocket de forma
-# INDEPENDIENTE al CORSMiddleware. Si el Origin del cliente (celular, app, etc.)
-# no está en su lista interna, rechaza con 403 ANTES de que llegue al endpoint.
-#
-# Como el avatar /ws/chat es público y la autenticación se hace por JWT en
-# query param (?token=...), no necesitamos este chequeo de Origin.
-# Este middleware ASGI lo elimina del scope para WebSockets únicamente.
 class WSOriginBypassMiddleware:
     def __init__(self, app: ASGIApp):
         self.app = app
@@ -110,29 +96,24 @@ class WSOriginBypassMiddleware:
             ]
         await self.app(scope, receive, send)
 
-
-# ── APLICACIÓN ────────────────────────────────────────────────────────────────
 app = FastAPI(
-    title="API Asistente RAG EPN (Dual Local/Cloud)",
+    title="API Asistente RAG EPN (Local / Local+Cloud)",
     version="4.0.0",
     lifespan=lifespan,
 )
 
-# WSOriginBypassMiddleware se agrega PRIMERO para que se ejecute primero
-# (Starlette aplica middlewares en orden inverso al que se agregan)
 app.add_middleware(WSOriginBypassMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=False,  # DEBE ser False cuando allow_origins=["*"]
+    allow_credentials=False,
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["*"],
 )
 
 
-# ── ENRUTADORES ───────────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(documents.router)
 app.include_router(chat.router)
@@ -141,14 +122,14 @@ app.include_router(configuracion.router)
 app.include_router(rag_params.router)
 app.include_router(evaluacion.router)
 app.include_router(ws_chat.router)
+app.include_router(nlu_config.router)
 
 
-# ── HEALTH CHECK ──────────────────────────────────────────────────────────────
 @app.get("/", tags=["Health"])
 async def health_check():
     return {
         "status":        "ok",
         "message":       "Servidor Backend RAG (Arquitectura Dual) en línea.",
         "version":       "4.0.0",
-        "modos_activos": ["local:local", "local:cloud", "cloud:cloud"],
+        "modos_activos": ["local:local", "local:cloud"],
     }

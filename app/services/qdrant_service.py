@@ -1,16 +1,5 @@
-# app/services/qdrant_service.py
-"""
-Servicio de vector store basado en Qdrant.
-Reemplaza pgvector para almacenar y buscar embeddings de documentos.
-
-Colecciones:
-  - documentos_local  (384 dims, sentence-transformers)
-  - documentos_cloud  (768 dims, Gemini)
-"""
-
 from typing import Optional
 
-from qdrant_client import QdrantClient
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -21,51 +10,20 @@ from qdrant_client.models import (
 )
 
 from app.core.config import (
-    QDRANT_URL,
     QDRANT_COLLECTION_LOCAL,
-    QDRANT_COLLECTION_CLOUD,
     EMBED_DIMENSION_LOCAL,
-    EMBED_DIMENSION_CLOUD,
 )
-
-# ─── Cliente singleton ───────────────────────────────────────────────────────
-_client: QdrantClient | None = None
-
-
-def _get_client() -> QdrantClient:
-    """Devuelve el cliente Qdrant (singleton)."""
-    global _client
-    if _client is None:
-        _client = QdrantClient(url=QDRANT_URL)
-        print(f"[QDRANT] ✅ Cliente conectado a {QDRANT_URL}")
-    return _client
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# HELPERS
-# ─────────────────────────────────────────────────────────────────────────────
+from app.core.singletons import QdrantClientSingleton
 
 def _nombre_coleccion(motor: str) -> str:
-    """Retorna el nombre de colección Qdrant según el motor."""
-    if motor == "cloud":
-        return QDRANT_COLLECTION_CLOUD
     return QDRANT_COLLECTION_LOCAL
 
 
 def _dimension(motor: str) -> int:
-    """Retorna la dimensión de embedding según el motor."""
-    if motor == "cloud":
-        return EMBED_DIMENSION_CLOUD
     return EMBED_DIMENSION_LOCAL
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# GESTIÓN DE COLECCIONES
-# ─────────────────────────────────────────────────────────────────────────────
-
 def crear_coleccion(motor: str) -> None:
-    """Crea la colección en Qdrant si no existe."""
-    client = _get_client()
+    client = QdrantClientSingleton().client
     nombre = _nombre_coleccion(motor)
     dim = _dimension(motor)
 
@@ -81,8 +39,7 @@ def crear_coleccion(motor: str) -> None:
 
 
 def eliminar_coleccion_qdrant(motor: str) -> dict:
-    """Elimina por completo una colección de Qdrant."""
-    client = _get_client()
+    client = QdrantClientSingleton().client
     nombre = _nombre_coleccion(motor)
     try:
         client.delete_collection(collection_name=nombre)
@@ -94,32 +51,19 @@ def eliminar_coleccion_qdrant(motor: str) -> dict:
 
 
 def listar_colecciones() -> list[str]:
-    """Lista todas las colecciones existentes en Qdrant."""
-    client = _get_client()
+    client = QdrantClientSingleton().client
     return [c.name for c in client.get_collections().collections]
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# INSERTAR PUNTOS
-# ─────────────────────────────────────────────────────────────────────────────
 
 def insertar_puntos(
     motor: str,
     embeddings: list[list[float]],
     payloads: list[dict],
 ) -> int:
-    """
-    Inserta puntos (vectores + payload) en la colección del motor indicado.
-    Crea la colección automáticamente si no existe.
-    Retorna la cantidad de puntos insertados.
-    """
-    client = _get_client()
+    client = QdrantClientSingleton().client
     nombre = _nombre_coleccion(motor)
 
-    # Asegurar que la colección existe
     crear_coleccion(motor)
 
-    # Obtener el siguiente ID base (offset basado en el count actual)
     info = client.get_collection(collection_name=nombre)
     base_id = info.points_count
 
@@ -136,17 +80,9 @@ def insertar_puntos(
     print(f"[QDRANT] ✅ {len(points)} puntos insertados en '{nombre}'")
     return len(points)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ELIMINAR PUNTOS POR DOCUMENT_NAME (hot-swap)
-# ─────────────────────────────────────────────────────────────────────────────
-
 def eliminar_puntos_por_documento(nombre_documento: str, motor: str) -> dict:
-    """
-    Elimina todos los puntos cuyo payload contiene document_name == nombre_documento.
-    Permite hot-swap de documentos sin recrear la colección.
-    """
-    client = _get_client()
+
+    client = QdrantClientSingleton().client
     nombre = _nombre_coleccion(motor)
 
     try:
@@ -169,8 +105,7 @@ def eliminar_puntos_por_documento(nombre_documento: str, motor: str) -> dict:
 
 
 def eliminar_todos_los_puntos(motor: str) -> dict:
-    """Elimina todos los puntos de una colección (recreándola vacía)."""
-    client = _get_client()
+    client = QdrantClientSingleton().client
     nombre = _nombre_coleccion(motor)
     dim = _dimension(motor)
 
@@ -188,11 +123,6 @@ def eliminar_todos_los_puntos(motor: str) -> dict:
         print(f"[QDRANT] Error al vaciar '{nombre}': {e}")
         return {"mensaje": str(e)}
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# BÚSQUEDA DE SIMILITUD
-# ─────────────────────────────────────────────────────────────────────────────
-
 def buscar_similares(
     query_embedding: list[float],
     motor: str,
@@ -200,11 +130,7 @@ def buscar_similares(
     umbral: float = 0.15,
     filtro_documento: Optional[str] = None,
 ) -> list[dict]:
-    """
-    Búsqueda de similitud coseno en Qdrant con filtro de umbral.
-    Retorna lista de dicts con contenido, metadata, score.
-    """
-    client = _get_client()
+    client = QdrantClientSingleton().client
     nombre = _nombre_coleccion(motor)
 
     query_filter = None

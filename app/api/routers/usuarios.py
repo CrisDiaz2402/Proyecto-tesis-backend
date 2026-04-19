@@ -5,7 +5,7 @@ from typing import List
 
 from app.db import models
 from app.db.deps import get_db
-from app.schemas.user_schemas import UsuarioCreate, UsuarioUpdate, UsuarioOut
+from app.schemas.schemas import UsuarioCreate, UsuarioUpdate, UsuarioOut
 from app.core.security import get_password_hash, get_current_user
 
 router = APIRouter(prefix="/api/usuarios", tags=["usuarios"])
@@ -16,7 +16,6 @@ def crear_usuario(
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(get_current_user),   # 🔒 requiere JWT
 ):
-    """Crea un nuevo administrador encriptando su contraseña."""
     usuario_existente = db.query(models.Usuario).filter(
         models.Usuario.username == usuario.username
     ).first()
@@ -39,7 +38,6 @@ def listar_usuarios(
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(get_current_user),   # 🔒 requiere JWT
 ):
-    """Retorna la lista de todos los administradores."""
     return db.query(models.Usuario).order_by(models.Usuario.fecha_creacion.desc()).all()
 
 @router.put("/{usuario_id}", response_model=UsuarioOut)
@@ -49,7 +47,6 @@ def actualizar_usuario(
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(get_current_user),   # 🔒 requiere JWT
 ):
-    """Actualiza el username o la contraseña de un usuario."""
     db_user = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
@@ -79,7 +76,6 @@ def eliminar_usuario(
     db: Session = Depends(get_db),
     usuario_actual: models.Usuario = Depends(get_current_user),  # 🔒 requiere JWT
 ):
-    """Elimina permanentemente a un usuario."""
     if usuario_actual.id == usuario_id:
         raise HTTPException(status_code=400, detail="No puedes eliminarte a ti mismo.")
 

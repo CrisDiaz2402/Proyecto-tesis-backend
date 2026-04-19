@@ -1,14 +1,4 @@
 # app/api/routers/evaluacion.py
-"""
-Router de evaluación RAG.
-
-Endpoints:
-  POST /api/evaluacion/ejecutar
-    Evaluación clásica síncrona.
-
-  POST /api/evaluacion/ejecutar-stream
-    Evaluación con Server-Sent Events (SSE).
-"""
 
 import json
 from fastapi import APIRouter, Depends, HTTPException
@@ -16,7 +6,7 @@ from fastapi.responses import StreamingResponse
 
 from app.db import models
 from app.core.security import get_current_user
-from app.schemas.evaluacion_schemas import EjecucionRequest, ResultadoEvaluacion
+from app.schemas.schemas import EjecucionRequest, ResultadoEvaluacion
 from app.services.evaluacion_service import (
     ejecutar_evaluacion,
     ejecutar_evaluacion_stream,
@@ -30,7 +20,6 @@ def ejecutar(
     request: EjecucionRequest,
     _: models.Usuario = Depends(get_current_user),
 ):
-    """Lanza una sesión de evaluación RAG completa de forma síncrona."""
     casos_dict = [caso.model_dump() for caso in request.casos]
 
     if not any(c.get("habilitado", True) for c in casos_dict):
@@ -57,7 +46,6 @@ def ejecutar_stream(
     request: EjecucionRequest,
     _: models.Usuario = Depends(get_current_user),
 ):
-    """Lanza la evaluación y emite Server-Sent Events (SSE) mientras avanza."""
     casos_dict = [caso.model_dump() for caso in request.casos]
 
     if not any(c.get("habilitado", True) for c in casos_dict):

@@ -1,10 +1,3 @@
-# app/api/routers/ws_chat.py
-"""
-WebSocket endpoints:
-  - /ws/chat    → chat RAG en tiempo real (usuarios)
-  - /ws/monitor → push de estado al panel admin cada segundo
-"""
-
 import json
 import time
 import asyncio
@@ -18,19 +11,20 @@ from app.core.security import validate_token_ws
 from app.core.constants import TIPOS_WEBSOCKET
 from app.core.exceptions import AuthError, RAGError
 from app.db.database import SessionLocal
-from app.services.rag_service import consultar_base_conocimiento
+from app.services.rag_service import consultar_base_conocimiento, pipeline_streaming, generar_respuesta_stream_local
 from app.services.config_service import obtener_motor_activo
-from app.services.vllm_service import generar_respuesta_stream_local
+from app.services.intent_service import detectar_intencion
+from app.services.nlu_config_service import get_nlu_config
+from app.core.event_bus import event_bus
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
+def _on_motor_cambiado(data: dict):
+    print(f"[WS] Observer: motor cambiado a {data}")
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MODELOS DE DATOS INTERNOS
-# ─────────────────────────────────────────────────────────────────────────────
+event_bus.suscribir("motor_cambiado", _on_motor_cambiado)
 
 class ConexionInfo:
-    """Representa una sesión WebSocket abierta."""
     def __init__(self, client_id: str, username: str, websocket: WebSocket, ip: str = ""):
         self.client_id = client_id
         self.username = username
@@ -48,7 +42,6 @@ class ConexionInfo:
 
 
 class ConsultaActiva:
-    """Representa una consulta RAG en curso."""
     def __init__(self, client_id: str, pregunta: str, motor: str):
         self.id = str(uuid.uuid4())[:8]
         self.client_id = client_id
@@ -67,7 +60,6 @@ class ConsultaActiva:
 
 
 class ConsultaHistorial:
-    """Registro de una consulta ya finalizada."""
     def __init__(self, consulta: ConsultaActiva, latencia_ms: int, cache: bool):
         self.id = consulta.id
         self.client_id = consulta.client_id
@@ -88,37 +80,18 @@ class ConsultaHistorial:
             "fin": self.fin,
         }
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# MANAGER CENTRAL
-# ─────────────────────────────────────────────────────────────────────────────
-
 class ConnectionManager:
-    """
-    Gestiona:
-    - Conexiones WS de usuarios (chat)
-    - Consultas activas (en procesamiento)
-    - Historial de consultas
-    - Conexiones WS del monitor (admin)
-    """
 
     def __init__(self):
-        # Sesiones de chat activas: client_id → ConexionInfo
         self._conexiones: Dict[str, ConexionInfo] = {}
-        # Consultas en proceso: query_id → ConsultaActiva
         self._consultas_activas: Dict[str, ConsultaActiva] = {}
-        # Historial (últimas 50)
         self._historial: List[ConsultaHistorial] = []
         self._max_historial = 50
-        # Contadores
         self._total_consultas = 0
         self._cache_hits = 0
         self._latencias: List[int] = []
         self._max_latencias = 100
-        # Conexiones del monitor admin
         self._monitor_connections: List[WebSocket] = []
-
-    # ── Conexiones de chat ────────────────────────────────────────────────────
 
     async def conectar_usuario(self, websocket: WebSocket, client_id: str,
                                username: str, ip: str = ""):
@@ -129,7 +102,6 @@ class ConnectionManager:
 
     def desconectar_usuario(self, client_id: str):
         self._conexiones.pop(client_id, None)
-        # Limpiar cualquier consulta activa del usuario que pueda haber quedado
         huerfanas = [qid for qid, q in self._consultas_activas.items()
                      if q.client_id == client_id]
         for qid in huerfanas:
@@ -141,8 +113,6 @@ class ConnectionManager:
         info = self._conexiones.get(client_id)
         if info and info.websocket.client_state == WebSocketState.CONNECTED:
             await info.websocket.send_json(message)
-
-    # ── Consultas activas ─────────────────────────────────────────────────────
 
     def iniciar_consulta(self, client_id: str, pregunta: str, motor: str) -> ConsultaActiva:
         c = ConsultaActiva(client_id, pregunta, motor)
@@ -165,12 +135,9 @@ class ConnectionManager:
                 self._historial.pop()
         asyncio.create_task(self._broadcast_monitor())
 
-    # ── Monitor admin ─────────────────────────────────────────────────────────
-
     async def conectar_monitor(self, websocket: WebSocket):
         await websocket.accept()
         self._monitor_connections.append(websocket)
-        # Enviar estado inmediato al conectar
         await self._send_monitor_state(websocket)
 
     def desconectar_monitor(self, websocket: WebSocket):
@@ -178,7 +145,6 @@ class ConnectionManager:
             self._monitor_connections.remove(websocket)
 
     async def _send_monitor_state(self, ws: WebSocket):
-        """Envía snapshot completo del estado a un websocket de monitor."""
         if ws.client_state != WebSocketState.CONNECTED:
             return
         avg = int(sum(self._latencias) / len(self._latencias)) if self._latencias else 0
@@ -202,7 +168,6 @@ class ConnectionManager:
             self.desconectar_monitor(ws)
 
     async def _broadcast_monitor(self):
-        """Envía estado actualizado a todos los admins conectados al monitor."""
         muertos = []
         for ws in list(self._monitor_connections):
             try:
@@ -212,31 +177,17 @@ class ConnectionManager:
         for ws in muertos:
             self.desconectar_monitor(ws)
 
-
-# Instancia global (singleton del módulo)
 manager = ConnectionManager()
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ENDPOINT: /ws/chat
-# ─────────────────────────────────────────────────────────────────────────────
 
 @router.websocket("/chat")
 async def chat_websocket(
     websocket: WebSocket,
     token: Optional[str] = Query(default=None, description="JWT token (opcional — el avatar es público)"),
 ):
-    """
-    WebSocket de chat público para el avatar.
-    - Sin token: se conecta como visitante anónimo (acceso libre al avatar).
-    - Con token válido: se identifica al usuario autenticado.
-    - Con token inválido/corrupto: se rechaza la conexión (evita tokens manipulados).
-    """
     client_id: str
     username: str
 
     if token:
-        # Hay token → intentar autenticar; si falla, rechazar (no aceptar tokens corruptos)
         db = SessionLocal()
         try:
             usuario = validate_token_ws(token, db)
@@ -248,12 +199,10 @@ async def chat_websocket(
         finally:
             db.close()
     else:
-        # Sin token → visitante anónimo (flujo normal del avatar público)
         anon_id = str(uuid.uuid4())[:8]
         client_id = f"anon_{anon_id}"
         username = "Visitante"
 
-    # Extraer IP del cliente
     ip = ""
     if websocket.client:
         ip = str(websocket.client.host)
@@ -261,7 +210,6 @@ async def chat_websocket(
     await manager.conectar_usuario(websocket, client_id, username, ip)
 
     try:
-        # Mensaje de bienvenida
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["estado"],
             "mensaje": f"Conectado al Avatar RAG EPN (motor: {obtener_motor_activo()}). Realiza tu consulta académica.",
@@ -297,28 +245,16 @@ async def chat_websocket(
             pass
         manager.desconectar_usuario(client_id)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# ENDPOINT: /ws/monitor
-# ─────────────────────────────────────────────────────────────────────────────
-
 @router.websocket("/monitor")
 async def monitor_websocket(
     websocket: WebSocket,
     token: str = Query(..., description="JWT token de admin"),
 ):
-    """
-    WebSocket del panel de administración.
-    Recibe push automático cada vez que cambia el estado del sistema.
-    También hace push periódico cada 1s para actualizar tiempos transcurridos.
-    """
+
     db = SessionLocal()
     try:
         usuario = validate_token_ws(token, db)
-        # Opcional: verificar que sea admin
-        # if getattr(usuario, 'rol', '') != 'Admin':
-        #     await websocket.close(code=4403, reason="No autorizado")
-        #     return
+
     except (HTTPException, Exception):
         await websocket.close(code=4401, reason="Token inválido")
         return
@@ -328,12 +264,11 @@ async def monitor_websocket(
     await manager.conectar_monitor(websocket)
 
     try:
-        # Push periódico cada 1s para que los timers en el frontend se actualicen
         while True:
             await asyncio.sleep(1)
             if websocket.client_state != WebSocketState.CONNECTED:
                 break
-            await manager._send_monitor_state(websocket)
+            await manager._broadcast_monitor()
 
     except WebSocketDisconnect:
         pass
@@ -342,13 +277,7 @@ async def monitor_websocket(
     finally:
         manager.desconectar_monitor(websocket)
 
-
-# ─────────────────────────────────────────────────────────────────────────────
-# PROCESAMIENTO DE PREGUNTAS
-# ─────────────────────────────────────────────────────────────────────────────
-
 async def _procesar_pregunta(client_id: str, pregunta: str):
-    """Procesa una pregunta RAG y envía respuesta vía WebSocket con tracking completo."""
 
     if not pregunta.strip():
         await manager.send_to_user(client_id, {
@@ -357,8 +286,42 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         })
         return
 
+    # ── Detección de intención ──────────────────────────────────────────
+    nlu_cfg = get_nlu_config()
+    intencion_result = detectar_intencion(
+        pregunta,
+        palabras_saludo=nlu_cfg["palabras_saludo"],
+        frases_despedida=nlu_cfg["frases_despedida"],
+        frases_agradecimiento=nlu_cfg["frases_agradecimiento"],
+    )
+    intencion = intencion_result["intencion"]
+
+    _MENSAJES_INTENCION = {
+        "saludo": nlu_cfg["mensaje_saludo"],
+        "despedida": nlu_cfg["mensaje_despedida"],
+        "agradecimiento": nlu_cfg["mensaje_agradecimiento"],
+        "fuera_de_tema": nlu_cfg["mensaje_fuera_de_tema"],
+    }
+
+    if intencion in _MENSAJES_INTENCION:
+        await manager.send_to_user(client_id, {
+            "tipo": "respuesta",
+            "pregunta": pregunta,
+            "respuesta": _MENSAJES_INTENCION[intencion],
+            "motor": "nlu",
+            "intencion": intencion,
+            "timestamp": time.time(),
+        })
+        await manager.send_to_user(client_id, {
+            "tipo": TIPOS_WEBSOCKET["final"],
+            "mensaje": "Consulta completada.",
+        })
+        return
+
+    # ── Pipeline RAG (intención = consulta_academica) ───────────────────
     motor_actual = obtener_motor_activo()
     consulta = manager.iniciar_consulta(client_id, pregunta, motor_actual)
+    query_id = consulta.id
     t_inicio = time.time()
 
     try:
@@ -373,7 +336,6 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         )
 
         if motor_llm == "local":
-            # ── Streaming token a token con vLLM ─────────────────────────────
             from app.services.rag_service import (
                 _generar_embedding, _buscar_chunks_similares,
                 _get_retrieval_params, _get_num_tokens,
@@ -393,7 +355,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                     "cached": True,
                     "timestamp": time.time(),
                 })
-                manager.finalizar_consulta(consulta.id, latencia, cache=True)
+                manager.finalizar_consulta(query_id, latencia, cache=True)
             else:
                 loop = asyncio.get_event_loop()
                 query_embedding = await loop.run_in_executor(
@@ -409,11 +371,11 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                     await manager.send_to_user(client_id, {
                         "tipo": "respuesta",
                         "pregunta": pregunta,
-                        "respuesta": "Lo siento, esa información no existe en mi base de datos oficial.",
+                        "respuesta": nlu_cfg["mensaje_sin_resultados"],
                         "motor": motor_actual,
                         "timestamp": time.time(),
                     })
-                    manager.finalizar_consulta(consulta.id, latencia, cache=False)
+                    manager.finalizar_consulta(query_id, latencia, cache=False)
                 else:
                     contexto = "\n\n---\n\n".join([r["contenido"] for r in resultados])
                     params = get_params()
@@ -450,10 +412,9 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                         "motor": motor_actual,
                         "timestamp": time.time(),
                     })
-                    manager.finalizar_consulta(consulta.id, latencia, cache=False)
+                    manager.finalizar_consulta(query_id, latencia, cache=False)
 
         else:
-            # ── Cloud: RAG síncrono en thread pool ───────────────────────────
             await manager.send_to_user(client_id, {
                 "tipo": TIPOS_WEBSOCKET["estado"],
                 "mensaje": f"Generando respuesta (motor: {motor_actual})...",
@@ -473,7 +434,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                 "motor": motor_actual,
                 "timestamp": time.time(),
             })
-            manager.finalizar_consulta(consulta.id, latencia, cache=False)
+            manager.finalizar_consulta(query_id, latencia, cache=False)
 
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["final"],
@@ -482,7 +443,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
 
     except RAGError as e:
         latencia = int((time.time() - t_inicio) * 1000)
-        manager.finalizar_consulta(consulta.id, latencia, cache=False)
+        manager.finalizar_consulta(query_id, latencia, cache=False)
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["error"],
             "mensaje": f"Error RAG: {e.message}",
@@ -491,7 +452,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
 
     except Exception as e:
         latencia = int((time.time() - t_inicio) * 1000)
-        manager.finalizar_consulta(consulta.id, latencia, cache=False)
+        manager.finalizar_consulta(query_id, latencia, cache=False)
         print(f"[WS RAG ERROR] {client_id}: {e}")
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["error"],

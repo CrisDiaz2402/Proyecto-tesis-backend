@@ -1,19 +1,15 @@
 # app/schemas/schemas.py
 from pydantic import BaseModel
 from datetime import datetime
-from typing import Optional
+from typing import Optional, List
 
 class DocumentoOut(BaseModel):
     id: int
     nombre_archivo: str
     subido_por: str
     fecha_subida: datetime
-    
-    # ─── ECOSISTEMA DUAL (Para pintar en el Frontend) ───
     procesado_local: bool
-    procesado_cloud: bool
     estado_local: str
-    estado_cloud: str
 
     class Config:
         from_attributes = True
@@ -29,9 +25,136 @@ class AccionGlobalResponse(BaseModel):
 
 class PreguntaRequest(BaseModel):
     pregunta: str
-    # NUEVO: Indica al RAG qué modelo usar ("local" o "cloud")
     motor: str = "local" 
 
 class ChatResponse(BaseModel):
     pregunta_original: str
     respuesta: str
+
+class UsuarioBase(BaseModel):
+    username: str
+    rol: Optional[str] = "Admin"
+
+class UsuarioCreate(UsuarioBase):
+    password: str  
+
+class UsuarioUpdate(BaseModel):
+    username: Optional[str] = None
+    password: Optional[str] = None
+    rol: Optional[str] = None
+
+class UsuarioOut(UsuarioBase):
+    id: str    
+    fecha_creacion: datetime
+    
+    class Config:
+        from_attributes = True
+
+class LoginRequest(BaseModel):
+    username: str
+    password: str
+
+class TokenResponse(BaseModel):
+    access_token: str
+    token_type: str = "bearer"
+    username: str
+    rol: str
+
+class CasoEvaluacion(BaseModel):
+    id:                str
+    grupo:             str
+    tipo:              str                      
+    pregunta:          str
+    claves:            list[str]
+    claves_prohibidas: list[str]  = []
+    descripcion:       Optional[str] = None
+    habilitado:        bool       = True
+
+
+class EjecucionRequest(BaseModel):
+    experimento: str = "baseline"
+    casos:       list[CasoEvaluacion]
+
+
+class ResultadoCaso(BaseModel):
+    id:          str
+    grupo:       str
+    tipo:        str
+    pregunta:    str
+    respuesta:   str
+    latencia_ms: int
+    score:       float                           
+    veredicto:   str                             
+    detalle:     str
+    descripcion: Optional[str] = None
+
+
+class ResumenGrupo(BaseModel):
+    promedio: float
+    pass_:    int
+    parcial:  int
+    fail:     int
+    total:    int
+
+    class Config:
+        populate_by_name = True
+
+
+class ConteoGlobal(BaseModel):
+    pass_:   int
+    parcial: int
+    fail:    int
+    total:   int
+
+    class Config:
+        populate_by_name = True
+
+
+class ResultadoEvaluacion(BaseModel):
+    experimento:        str
+    motor:              str
+    timestamp:          str
+    duracion_total_seg: float
+    resultados:         list[ResultadoCaso]
+    resumen_por_grupo:  dict[str, dict]
+    score_global:       float
+    conteo_global:      dict
+
+
+class ProgresoEvaluacion(BaseModel):
+    tipo:           str                            
+    caso_actual:    int       = 0
+    total_casos:    int       = 0
+    porcentaje:     int       = 0
+    resultado:      Optional[ResultadoCaso]      = None
+    reporte_final:  Optional[ResultadoEvaluacion] = None
+    mensaje_error:  Optional[str]                = None
+
+
+class NLUConfigOut(BaseModel):
+    palabras_saludo: list[str]
+    frases_despedida: list[str]
+    frases_agradecimiento: list[str]
+    palabras_lista_larga: list[str]
+    frases_rechazo: list[str]
+    mensaje_saludo: str
+    mensaje_despedida: str
+    mensaje_agradecimiento: str
+    mensaje_fuera_de_tema: str
+    mensaje_sin_resultados: str
+
+    class Config:
+        from_attributes = True
+
+
+class NLUConfigUpdate(BaseModel):
+    palabras_saludo: Optional[list[str]] = None
+    frases_despedida: Optional[list[str]] = None
+    frases_agradecimiento: Optional[list[str]] = None
+    palabras_lista_larga: Optional[list[str]] = None
+    frases_rechazo: Optional[list[str]] = None
+    mensaje_saludo: Optional[str] = None
+    mensaje_despedida: Optional[str] = None
+    mensaje_agradecimiento: Optional[str] = None
+    mensaje_fuera_de_tema: Optional[str] = None
+    mensaje_sin_resultados: Optional[str] = None

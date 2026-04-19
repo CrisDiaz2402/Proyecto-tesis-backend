@@ -1,14 +1,3 @@
-# app/services/evaluacion_service.py
-"""
-Servicio de evaluación RAG.
-
-Contiene toda la lógica de scoring:
-  - Normalización de texto y matching flexible de claves
-  - Scoring por tipo: contiene / no_contiene / corrige / no_alucina
-  - Orquestación completa de una sesión de evaluación
-  - Generador de progreso para streaming SSE (ejecutar_evaluacion_stream)
-"""
-
 import re
 import time
 from datetime import datetime, timezone
@@ -17,10 +6,10 @@ from typing import Generator
 
 from app.services.rag_service import consultar_base_conocimiento
 from app.services.config_service import obtener_motor_activo
+from app.services.nlu_config_service import get_nlu_config
 
 
 def _normalizar(texto: str) -> str:
-    """Lowercase y sin tildes para comparación flexible."""
     texto = texto.lower()
     for src, dst in {"á":"a","é":"e","í":"i","ó":"o","ú":"u","ñ":"n","ü":"u"}.items():
         texto = texto.replace(src, dst)
@@ -28,7 +17,6 @@ def _normalizar(texto: str) -> str:
 
 
 def _contiene_clave(respuesta: str, clave: str) -> bool:
-    """True si 'clave' aparece en 'respuesta' de forma flexible."""
     r = _normalizar(respuesta)
     c = _normalizar(clave)
 
@@ -47,21 +35,11 @@ def _contiene_clave(respuesta: str, clave: str) -> bool:
     return False
 
 
-def _es_rechazo(respuesta: str) -> bool:
-    """True si la respuesta indica que el sistema no tiene información."""
+def _es_rechazo(respuesta: str, frases_rechazo: list[str] | None = None) -> bool:
     r = _normalizar(respuesta)
-    frases = [
-        "no existe en mi base",
-        "no existe en la base",
-        "lo siento",
-        "no tengo informacion",
-        "no hay informacion",
-        "no se encuentra",
-        "no consta",
-        "no esta disponible",
-        "no puedo",
-        "no dispongo",
-    ]
+    if frases_rechazo is None:
+        frases_rechazo = get_nlu_config().get("frases_rechazo", [])
+    frases = [_normalizar(f) for f in frases_rechazo]
     return any(f in r for f in frases)
 
 
@@ -121,29 +99,55 @@ def _score_no_alucina(respuesta: str, caso: dict) -> tuple[float, str]:
     return 0.0, f"FAIL — ALUCINACIÓN detectada: mencionó {[c for c in prohibidas if _contiene_clave(respuesta, c)]}"
 
 
+SCORING_STRATEGIES = {
+    "contiene":    _score_contiene,
+    "no_contiene": _score_no_contiene,
+    "corrige":     _score_corrige,
+    "no_alucina":  _score_no_alucina,
+}
+
+
 def evaluar_caso(respuesta: str, caso: dict) -> tuple[float, str]:
     """Dispatcher — elige la función de scoring según el tipo del caso."""
     tipo = caso["tipo"]
-    if tipo == "contiene":
-        return _score_contiene(respuesta, caso)
-    if tipo == "no_contiene":
-        return _score_no_contiene(respuesta, caso)
-    if tipo == "corrige":
-        return _score_corrige(respuesta, caso)
-    if tipo == "no_alucina":
-        return _score_no_alucina(respuesta, caso)
+    fn = SCORING_STRATEGIES.get(tipo)
+    if fn:
+        return fn(respuesta, caso)
     return 0.0, f"tipo desconocido: {tipo}"
 
+class ReporteEvaluacionBuilder:
+    def __init__(self):
+        self._experimento = ""
+        self._motor = ""
+        self._resultados = []
+        self._t_inicio = 0.0
 
-# ─────────────────────────────────────────────────────────────────────────────
-# MÉTRICAS DE EVALUACIÓN
+    def set_experimento(self, nombre: str) -> "ReporteEvaluacionBuilder":
+        self._experimento = nombre
+        return self
+
+    def set_motor(self, motor: str) -> "ReporteEvaluacionBuilder":
+        self._motor = motor
+        return self
+
+    def set_resultados(self, resultados: list[dict]) -> "ReporteEvaluacionBuilder":
+        self._resultados = resultados
+        return self
+
+    def set_t_inicio(self, t: float) -> "ReporteEvaluacionBuilder":
+        self._t_inicio = t
+        return self
+
+    def build(self) -> dict:
+        return _construir_reporte(self._experimento, self._motor, self._resultados, self._t_inicio)
+
+
 def _construir_reporte(
     experimento: str,
     motor: str,
     resultados: list[dict],
     t_inicio: float,
 ) -> dict:
-    """Calcula resumen por grupo y score global."""
     scores_por_grupo: dict[str, list[float]] = {}
     for r in resultados:
         scores_por_grupo.setdefault(r["grupo"], []).append(r["score"])
@@ -183,10 +187,6 @@ def _construir_reporte(
 
 
 def ejecutar_evaluacion(experimento: str, casos: list[dict]) -> dict:
-    """
-    Ejecuta la evaluación completa de forma síncrona y devuelve el reporte.
-    Se mantiene por compatibilidad con el endpoint /ejecutar existente.
-    """
     t_inicio      = time.time()
     motor         = obtener_motor_activo()
     casos_activos = [c for c in casos if c.get("habilitado", True)]
@@ -223,7 +223,6 @@ def ejecutar_evaluacion_stream(
     experimento: str,
     casos: list[dict],
 ) -> Generator[dict, None, None]:
-    """Generador que procesa los casos uno a uno y yielda dicts con el progreso."""
     t_inicio      = time.time()
     motor         = obtener_motor_activo()
     casos_activos = [c for c in casos if c.get("habilitado", True)]
@@ -265,7 +264,6 @@ def ejecutar_evaluacion_stream(
             "resultado":   resultado_caso,
         }
 
-    # Todos los casos terminaron — construir reporte final y emitirlo
     reporte = _construir_reporte(experimento, motor, resultados, t_inicio)
 
     yield {

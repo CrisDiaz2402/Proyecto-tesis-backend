@@ -11,11 +11,6 @@ router = APIRouter(prefix="/api/chat", tags=["chat"])
 
 @router.post("/consultar", response_model=ChatResponse)
 async def consultar_ia(request: PreguntaRequest):
-    """
-    Recibe una pregunta del usuario.
-    El motor se obtiene de la configuración global del administrador,
-    siendo totalmente transparente para el usuario final.
-    """
     motor_actual = obtener_motor_activo()
 
     try:
@@ -24,7 +19,6 @@ async def consultar_ia(request: PreguntaRequest):
             None,
             lambda: consultar_base_conocimiento(request.pregunta, motor=motor_actual)
         )
-        # Latencia < 500 ms es indicador fiable de cache hit
         return ChatResponse(
             pregunta_original=request.pregunta,
             respuesta=respuesta
