@@ -32,7 +32,7 @@ def _get_embed_model() -> SentenceTransformer:
     """Instancia el modelo de embeddings una sola vez (singleton)."""
     global _embed_model
     if _embed_model is None:
-        _embed_model = SentenceTransformer(EMBED_MODEL_LOCAL)
+        _embed_model = SentenceTransformer(EMBED_MODEL_LOCAL, device="cpu")
         print(f"[VLLM_SERVICE] ✅ Modelo de embeddings cargado: {EMBED_MODEL_LOCAL}")
     return _embed_model
 

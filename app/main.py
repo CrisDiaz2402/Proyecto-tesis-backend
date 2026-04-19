@@ -5,6 +5,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.types import ASGIApp, Receive, Scope, Send
 
 # Base de datos
 from app.db.database import engine
@@ -20,7 +21,7 @@ from app.api.routers import ws_chat       # WebSocket chat
 models.Base.metadata.create_all(bind=engine)
 
 
-# ── LIFESPAN (reemplaza @app.on_event) ────────────────────────────────────────
+# ── LIFESPAN ──────────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """
@@ -37,7 +38,6 @@ async def lifespan(app: FastAPI):
 
     db = SessionLocal()
     try:
-        # ── 1. USUARIO ADMIN POR DEFECTO ─────────────────────────────────────
         admin_existente = db.query(models.Usuario).filter(
             models.Usuario.username == "admin"
         ).first()
@@ -54,7 +54,6 @@ async def lifespan(app: FastAPI):
         else:
             print("[STARTUP] ✅ Usuario admin ya existe.")
 
-        # ── 2. CONFIGURACIÓN RAG POR DEFECTO ─────────────────────────────────
         config = _get_or_create(db)
         print(f"[STARTUP] ✅ Configuración RAG lista (id={config.id}).")
 
@@ -63,7 +62,6 @@ async def lifespan(app: FastAPI):
     finally:
         db.close()
 
-    # ── 3. PRECALENTAMIENTO DEL MODELO LOCAL ─────────────────────────────────
     try:
         from app.services.config_service import obtener_motor_activo
         from app.services.rag_service import consultar_base_conocimiento
@@ -86,10 +84,31 @@ async def lifespan(app: FastAPI):
     except Exception as e:
         print(f"[STARTUP] ⚠️  Precalentamiento omitido: {e}")
 
-    yield  # La aplicación se ejecuta aquí
+    yield
 
-    # Cleanup al apagar
     print("[SHUTDOWN] 🛑 Apagando servidor...")
+
+
+# ── MIDDLEWARE: Bypass chequeo de Origin para WebSockets ──────────────────────
+# Starlette valida el header "Origin" en el handshake WebSocket de forma
+# INDEPENDIENTE al CORSMiddleware. Si el Origin del cliente (celular, app, etc.)
+# no está en su lista interna, rechaza con 403 ANTES de que llegue al endpoint.
+#
+# Como el avatar /ws/chat es público y la autenticación se hace por JWT en
+# query param (?token=...), no necesitamos este chequeo de Origin.
+# Este middleware ASGI lo elimina del scope para WebSockets únicamente.
+class WSOriginBypassMiddleware:
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] == "websocket":
+            scope["headers"] = [
+                (name, value)
+                for name, value in scope.get("headers", [])
+                if name.lower() != b"origin"
+            ]
+        await self.app(scope, receive, send)
 
 
 # ── APLICACIÓN ────────────────────────────────────────────────────────────────
@@ -99,49 +118,19 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-
-# ── CORS ──────────────────────────────────────────────────────────────────────
-# Lee los orígenes permitidos desde variables de entorno para que sea fácil
-# cambiarlos sin modificar código.
-#
-# En desarrollo puedes dejar los defaults.
-# En producción define en tu .env:
-#   FRONTEND_URL=http://192.168.100.43:5173  (o la IP/dominio real del frontend)
-#
-# NOTA IMPORTANTE PARA WEBSOCKETS:
-# CORSMiddleware de FastAPI NO protege las conexiones WebSocket — el navegador
-# no envía el header Origin en el handshake WS de la misma forma que en HTTP.
-# El control de acceso para WS se hace validando el token JWT en el endpoint.
-# Por eso aquí ponemos allow_origins generosos para desarrollo; en producción
-# restringe al dominio exacto del frontend.
-
-FRONTEND_URL  = os.getenv("FRONTEND_URL",  "http://localhost:5173")
-FRONTEND_URL2 = os.getenv("FRONTEND_URL2", "http://192.168.100.43:5173")
-
-# Construir lista de orígenes permitidos sin duplicados
-_origins_base = [
-    FRONTEND_URL,
-    FRONTEND_URL2,
-    "http://localhost:5173",
-    "http://localhost:5174",   # puerto alternativo de Vite
-    "http://127.0.0.1:5173",
-    "http://127.0.0.1:5174",
-    "http://localhost:80",
-    "http://localhost",
-    "http://192.168.100.43:5173",
-    "http://192.168.100.43:5173/"
-]
-ALLOWED_ORIGINS = list(dict.fromkeys(o for o in _origins_base if o))  # deduplica manteniendo orden
+# WSOriginBypassMiddleware se agrega PRIMERO para que se ejecute primero
+# (Starlette aplica middlewares en orden inverso al que se agregan)
+app.add_middleware(WSOriginBypassMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=ALLOWED_ORIGINS,
-    allow_origin_regex=".*",  # <--- EL MARTILLO: Acepta cualquier origen, burlando el bloqueo del celular
-    allow_credentials=True,   # necesario para que el frontend envíe cookies / headers de auth
+    allow_origins=["*"],
+    allow_credentials=False,  # DEBE ser False cuando allow_origins=["*"]
     allow_methods=["*"],
     allow_headers=["*"],
-    expose_headers=["*"],     # permite que el cliente lea headers personalizados en las respuestas
+    expose_headers=["*"],
 )
+
 
 # ── ENRUTADORES ───────────────────────────────────────────────────────────────
 app.include_router(auth.router)
@@ -158,9 +147,8 @@ app.include_router(ws_chat.router)
 @app.get("/", tags=["Health"])
 async def health_check():
     return {
-        "status":          "ok",
-        "message":         "Servidor Backend RAG (Arquitectura Dual) en línea.",
-        "version":         "4.0.0",
-        "modos_activos":   ["local:local", "local:cloud", "cloud:cloud"],
-        "allowed_origins": ALLOWED_ORIGINS,
+        "status":        "ok",
+        "message":       "Servidor Backend RAG (Arquitectura Dual) en línea.",
+        "version":       "4.0.0",
+        "modos_activos": ["local:local", "local:cloud", "cloud:cloud"],
     }
