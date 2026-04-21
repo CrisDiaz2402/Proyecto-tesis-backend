@@ -1,8 +1,10 @@
 # app/services/providers.py
 from abc import ABC, abstractmethod
+import httpx
 from app.core.config import (
     VLLM_BASE_URL, LLM_MODEL_LOCAL, LLM_MODEL_CLOUD,
 )
+from app.core.exceptions import LLMError
 
 
 class LLMAdapter(ABC):
@@ -12,7 +14,6 @@ class LLMAdapter(ABC):
 
 class VLLMAdapter(LLMAdapter):
     def completar(self, prompt: str, max_tokens: int) -> str:
-        import httpx
         url = f"{VLLM_BASE_URL}/chat/completions"
         payload = {
             "model": LLM_MODEL_LOCAL,
@@ -20,10 +21,23 @@ class VLLMAdapter(LLMAdapter):
             "max_tokens": max_tokens,
             "temperature": 0,
         }
-        with httpx.Client(timeout=120.0) as client:
-            r = client.post(url, json=payload)
-            r.raise_for_status()
-        return r.json()["choices"][0]["message"]["content"]
+        try:
+            with httpx.Client(timeout=120.0) as client:
+                r = client.post(url, json=payload)
+                r.raise_for_status()
+            return r.json()["choices"][0]["message"]["content"]
+        except httpx.HTTPStatusError as e:
+            status = e.response.status_code
+            detail = ""
+            try:
+                detail = e.response.json().get("message", "")
+            except Exception:
+                pass
+            print(f"[VLLM] ❌ HTTP {status} — {detail or str(e)[:120]}")
+            raise LLMError(f"vLLM respondió {status}: {detail or 'prompt demasiado largo o modelo no disponible'}")
+        except httpx.ConnectError:
+            print("[VLLM] ❌ No se pudo conectar a vLLM en", VLLM_BASE_URL)
+            raise LLMError("vLLM no está disponible. Verifica que el servidor esté corriendo.")
 
 
 class GeminiAdapter(LLMAdapter):

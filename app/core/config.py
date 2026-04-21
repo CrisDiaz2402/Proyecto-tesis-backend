@@ -7,7 +7,6 @@ load_dotenv()
 
 DATABASE_URL   = os.getenv("DATABASE_URL")
 GOOGLE_API_KEY = os.getenv("GOOGLE_API_KEY")
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY", "")
 
 VLLM_BASE_URL = os.getenv("VLLM_BASE_URL")
 QDRANT_URL    = os.getenv("QDRANT_URL")

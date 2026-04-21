@@ -75,20 +75,22 @@ def limpiar_solo_cache(
     motor: str = Query("local"),    
     _: models.Usuario = Depends(get_current_user),
 ):
+    if motor not in ("local",):
+        raise HTTPException(status_code=400, detail="Solo se soporta motor='local'.")
     try:
         resultado = limpiar_cache(motor=motor)
-        etiqueta = {"local": "Local (ll + lc)", "all": "Todos (ll + lc)"}.get(motor, motor)
-        return AccionGlobalResponse(ok=True, mensaje=f"Caché [{etiqueta}] limpiado. {resultado['mensaje']}")
+        return AccionGlobalResponse(ok=True, mensaje=f"Caché [Local (ll + lc)] limpiado. {resultado['mensaje']}")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 @router.delete("/vectors/all", response_model=AccionGlobalResponse)
 def limpiar_vectores_y_cache(
-    motor: str = Query("local"),        # "local" | "cloud" | "all"
+    motor: str = Query("local"),        # El único valor válido es "local"
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(get_current_user),
 ):
-
+    if motor not in ("local",):
+        raise HTTPException(status_code=400, detail="Solo se soporta motor='local'.")
     try:
         limpiar_cache(motor=motor)
         eliminar_todos_los_puntos(motor=motor)
@@ -97,10 +99,9 @@ def limpiar_vectores_y_cache(
             doc.estado_local = "No subido"
         db.commit()
 
-        etiqueta = {"local": "Local", "cloud": "Nube", "all": "Local + Nube"}.get(motor, motor)
         return AccionGlobalResponse(
             ok=True,
-            mensaje=f"Vectores y caché de [{etiqueta}] eliminados. Estado de documentos actualizado."
+            mensaje="Vectores y caché de [Local] eliminados. Estado de documentos actualizado."
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -112,6 +113,8 @@ def procesar_todos_los_documentos(
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(get_current_user),
 ):
+    if motor not in ("local",):
+        raise HTTPException(status_code=400, detail="Solo se soporta motor='local'.")
     documentos = db.query(models.Documento).all()
     if not documentos:
         return AccionGlobalResponse(ok=True, mensaje="No hay documentos para procesar.")
@@ -162,7 +165,7 @@ def eliminar_todos_los_documentos(
 @router.delete("/{documento_id}")
 def eliminar_documento(
     documento_id: int,
-    motor: str = Query("local"),        # "local" | "cloud"
+    motor: str = Query("local"),     
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(get_current_user),
 ):

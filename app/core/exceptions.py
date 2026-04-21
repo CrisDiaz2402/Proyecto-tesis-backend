@@ -2,7 +2,6 @@
 from typing import Optional, Dict, Any
 
 class RAGError(Exception):
-    """Base para todos los errores del sistema RAG."""
     
     def __init__(self, message: str, details: Optional[Dict[str, Any]] = None):
         super().__init__(message)

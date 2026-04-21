@@ -11,7 +11,6 @@ router = APIRouter(prefix="/api/auth", tags=["auth"])
 
 @router.post("/login", response_model=TokenResponse)
 def login(credentials: LoginRequest, db: Session = Depends(get_db)):
-    """Autentica al usuario y retorna un JWT si las credenciales son correctas."""
 
     usuario = db.query(models.Usuario).filter(
         models.Usuario.username == credentials.username

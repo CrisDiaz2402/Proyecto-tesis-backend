@@ -6,6 +6,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from starlette.types import ASGIApp, Receive, Scope, Send
+from prometheus_fastapi_instrumentator import Instrumentator
 
 from app.db.database import engine
 from app.db import models
@@ -123,6 +124,8 @@ app.include_router(rag_params.router)
 app.include_router(evaluacion.router)
 app.include_router(ws_chat.router)
 app.include_router(nlu_config.router)
+
+Instrumentator().instrument(app).expose(app)
 
 
 @app.get("/", tags=["Health"])

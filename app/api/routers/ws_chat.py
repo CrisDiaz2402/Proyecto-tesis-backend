@@ -1,5 +1,6 @@
 import json
 import time
+import time as _time
 import asyncio
 import uuid
 from typing import Dict, Any, List, Optional
@@ -179,6 +180,24 @@ class ConnectionManager:
 
 manager = ConnectionManager()
 
+
+def _check_rate_limit(client_id: str, max_por_minuto: int = 15) -> bool:
+    try:
+        from app.core.singletons import RedisClientSingleton
+        r = RedisClientSingleton().client
+        key = f"rate_limit:ws:{client_id}"
+        ahora = _time.time()
+        ventana = 60
+
+        r.zremrangebyscore(key, 0, ahora - ventana)
+        if r.zcard(key) >= max_por_minuto:
+            return False
+        r.zadd(key, {str(ahora): ahora})
+        r.expire(key, ventana + 5)
+        return True
+    except Exception:
+        return True  # fail-open: si Redis falla, no bloquear al usuario
+
 @router.websocket("/chat")
 async def chat_websocket(
     websocket: WebSocket,
@@ -286,7 +305,13 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         })
         return
 
-    # ── Detección de intención ──────────────────────────────────────────
+    if not _check_rate_limit(client_id, max_por_minuto=15):
+        await manager.send_to_user(client_id, {
+            "tipo": TIPOS_WEBSOCKET["error"],
+            "mensaje": "Demasiadas consultas seguidas. Espera un momento antes de continuar.",
+        })
+        return
+
     nlu_cfg = get_nlu_config()
     intencion_result = detectar_intencion(
         pregunta,

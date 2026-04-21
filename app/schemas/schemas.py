@@ -61,18 +61,17 @@ class TokenResponse(BaseModel):
     rol: str
 
 class CasoEvaluacion(BaseModel):
-    id:                str
-    grupo:             str
-    tipo:              str                      
-    pregunta:          str
-    claves:            list[str]
-    claves_prohibidas: list[str]  = []
-    descripcion:       Optional[str] = None
-    habilitado:        bool       = True
+    id:                  str
+    grupo:               str = "General"
+    pregunta:            str
+    respuesta_esperada:  str
+    umbral_similitud:    float = 0.80
+    descripcion:         Optional[str] = None
+    habilitado:          bool = True
 
 
 class EjecucionRequest(BaseModel):
-    experimento: str = "baseline"
+    experimento: str = "golden"
     casos:       list[CasoEvaluacion]
 
 
@@ -111,14 +110,16 @@ class ConteoGlobal(BaseModel):
 
 
 class ResultadoEvaluacion(BaseModel):
-    experimento:        str
-    motor:              str
-    timestamp:          str
-    duracion_total_seg: float
-    resultados:         list[ResultadoCaso]
-    resumen_por_grupo:  dict[str, dict]
-    score_global:       float
-    conteo_global:      dict
+    experimento:          str
+    motor:                str
+    timestamp:            str
+    duracion_total_seg:   float
+    resultados:           list[ResultadoCaso]
+    resumen_por_grupo:    dict[str, dict]
+    score_global:         float
+    similitud_promedio:   float = 0.0
+    latencia_promedio_ms: int   = 0
+    conteo_global:        dict
 
 
 class ProgresoEvaluacion(BaseModel):

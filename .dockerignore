@@ -1,0 +1,9 @@
+venv-fastapi/
+__pycache__/
+*.pyc
+*.pyo
+.env
+redis_data/
+documents_local/
+*.log
+.git/

@@ -40,6 +40,9 @@ def _es_respuesta_cacheable(respuesta: str) -> bool:
     if not respuesta or len(respuesta.strip()) < 20:
         return False
     texto = respuesta.lower().strip()
+    if "Error interno al consultar" in respuesta:
+        print("[REDIS_CACHE] ⚠️  Respuesta de error NO cacheada.")
+        return False
     from app.services.nlu_config_service import get_nlu_config
     cfg = get_nlu_config()
     frases_rechazo = cfg.get("frases_rechazo", [])

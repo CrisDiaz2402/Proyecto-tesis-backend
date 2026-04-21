@@ -10,7 +10,7 @@ from app.db import models
 from app.core.prompts import PROMPT_PRINCIPAL_DEFAULT
 
 DEFAULTS: dict[str, Any] = {
-    "umbral_relevancia_local": 0.15,
+    "umbral_relevancia_local": 0.05,
     "rag_k_local":             10,
     "prompt_principal": PROMPT_PRINCIPAL_DEFAULT,
 }
@@ -19,7 +19,7 @@ DEFAULTS: dict[str, Any] = {
 PARAM_LIMITS: dict[str, dict[str, Any]] = {
     "umbral_relevancia_local": {
         "min": 0.05, "max": 0.50, "type": "float",
-        "default": 0.15,
+        "default": 0.05,
         "label": "Umbral de relevancia local",
         "descripcion": "Score coseno mínimo para que un fragmento local entre al contexto.",
     },
@@ -27,7 +27,7 @@ PARAM_LIMITS: dict[str, dict[str, Any]] = {
         "min": 2, "max": 20, "type": "int",
         "default": 10,
         "label": "K local (fragmentos a recuperar)",
-        "descripcion": "Número de fragmentos a recuperar de pgvector local.",
+        "descripcion": "Número de fragmentos a recuperar de Qdrant (colección local).",
     },
 }
 

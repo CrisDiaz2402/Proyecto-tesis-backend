@@ -15,17 +15,10 @@ from app.core.config import (
 )
 from app.core.singletons import QdrantClientSingleton
 
-def _nombre_coleccion(motor: str) -> str:
-    return QDRANT_COLLECTION_LOCAL
-
-
-def _dimension(motor: str) -> int:
-    return EMBED_DIMENSION_LOCAL
-
 def crear_coleccion(motor: str) -> None:
     client = QdrantClientSingleton().client
-    nombre = _nombre_coleccion(motor)
-    dim = _dimension(motor)
+    nombre = QDRANT_COLLECTION_LOCAL
+    dim = EMBED_DIMENSION_LOCAL
 
     colecciones = [c.name for c in client.get_collections().collections]
     if nombre not in colecciones:
@@ -40,7 +33,7 @@ def crear_coleccion(motor: str) -> None:
 
 def eliminar_coleccion_qdrant(motor: str) -> dict:
     client = QdrantClientSingleton().client
-    nombre = _nombre_coleccion(motor)
+    nombre = QDRANT_COLLECTION_LOCAL
     try:
         client.delete_collection(collection_name=nombre)
         print(f"[QDRANT] 🗑️ Colección '{nombre}' eliminada.")
@@ -60,7 +53,7 @@ def insertar_puntos(
     payloads: list[dict],
 ) -> int:
     client = QdrantClientSingleton().client
-    nombre = _nombre_coleccion(motor)
+    nombre = QDRANT_COLLECTION_LOCAL
 
     crear_coleccion(motor)
 
@@ -83,7 +76,7 @@ def insertar_puntos(
 def eliminar_puntos_por_documento(nombre_documento: str, motor: str) -> dict:
 
     client = QdrantClientSingleton().client
-    nombre = _nombre_coleccion(motor)
+    nombre = QDRANT_COLLECTION_LOCAL
 
     try:
         client.delete(
@@ -106,8 +99,8 @@ def eliminar_puntos_por_documento(nombre_documento: str, motor: str) -> dict:
 
 def eliminar_todos_los_puntos(motor: str) -> dict:
     client = QdrantClientSingleton().client
-    nombre = _nombre_coleccion(motor)
-    dim = _dimension(motor)
+    nombre = QDRANT_COLLECTION_LOCAL
+    dim = EMBED_DIMENSION_LOCAL
 
     try:
         colecciones = [c.name for c in client.get_collections().collections]
@@ -131,7 +124,7 @@ def buscar_similares(
     filtro_documento: Optional[str] = None,
 ) -> list[dict]:
     client = QdrantClientSingleton().client
-    nombre = _nombre_coleccion(motor)
+    nombre = QDRANT_COLLECTION_LOCAL
 
     query_filter = None
     if filtro_documento:

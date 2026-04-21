@@ -1,6 +1,7 @@
 # app/api/routers/evaluacion.py
 
 import json
+import traceback
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
@@ -29,16 +30,12 @@ def ejecutar(
         )
 
     try:
-        resultado = ejecutar_evaluacion(
+        return ejecutar_evaluacion(
             experimento=request.experimento,
             casos=casos_dict,
         )
-        return resultado
     except Exception as e:
-        raise HTTPException(
-            status_code=500,
-            detail=f"Error durante la evaluación: {str(e)}",
-        )
+        raise HTTPException(status_code=500, detail=f"Error durante la evaluación: {str(e)}")
 
 
 @router.post("/ejecutar-stream")
@@ -55,14 +52,39 @@ def ejecutar_stream(
         )
 
     def _generar_sse():
+        casos_activos = [c for c in casos_dict if c.get("habilitado", True)]
+        print(
+            f"[EVAL_STREAM] ▶ Iniciando experimento='{request.experimento}' "
+            f"con {len(casos_activos)} casos activos."
+        )
         try:
             for evento in ejecutar_evaluacion_stream(
                 experimento=request.experimento,
                 casos=casos_dict,
             ):
+                if evento.get("tipo") == "progreso":
+                    r = evento.get("resultado", {})
+                    print(
+                        f"[EVAL_STREAM] [{evento['caso_actual']}/{evento['total_casos']}] "
+                        f"id={r.get('id')} | veredicto={r.get('veredicto')} | "
+                        f"latencia={r.get('latencia_ms')}ms"
+                    )
+                elif evento.get("tipo") == "completado":
+                    rep = evento.get("reporte_final", {})
+                    print(
+                        f"[EVAL_STREAM] ✅ Completado — "
+                        f"score={rep.get('score_global')} | "
+                        f"similitud={rep.get('similitud_promedio')} | "
+                        f"duración={rep.get('duracion_total_seg')}s"
+                    )
                 yield f"data: {json.dumps(evento, ensure_ascii=False)}\n\n"
         except Exception as e:
-            error_evento = {"tipo": "error", "mensaje_error": str(e)}
+            print(f"[EVAL_STREAM] ❌ Error inesperado:\n{traceback.format_exc()}")
+            error_evento = {
+                "tipo": "error",
+                "mensaje_error": str(e),
+                "detalle": traceback.format_exc(),
+            }
             yield f"data: {json.dumps(error_evento, ensure_ascii=False)}\n\n"
 
     return StreamingResponse(
