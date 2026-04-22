@@ -1,3 +1,4 @@
+# app/api/routers/ws_chat.py
 import json
 import time
 import time as _time
@@ -181,7 +182,11 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-def _check_rate_limit(client_id: str, max_por_minuto: int = 15) -> bool:
+def _check_rate_limit(client_id: str, max_por_minuto: int = 60) -> bool:
+    """
+    Límite de consultas por minuto por cliente.
+    En producción puedes bajar este valor a 15.
+    """
     try:
         from app.core.singletons import RedisClientSingleton
         r = RedisClientSingleton().client
@@ -198,29 +203,20 @@ def _check_rate_limit(client_id: str, max_por_minuto: int = 15) -> bool:
     except Exception:
         return True  # fail-open: si Redis falla, no bloquear al usuario
 
+
+# ── AVATAR: 100% público, sin autenticación ───────────────────────────────────
 @router.websocket("/chat")
 async def chat_websocket(
     websocket: WebSocket,
-    token: Optional[str] = Query(default=None, description="JWT token (opcional — el avatar es público)"),
 ):
-    client_id: str
-    username: str
-
-    if token:
-        db = SessionLocal()
-        try:
-            usuario = validate_token_ws(token, db)
-            client_id = f"user_{usuario.id}"
-            username = getattr(usuario, "username", client_id)
-        except (HTTPException, Exception):
-            await websocket.close(code=4401, reason="Token inválido")
-            return
-        finally:
-            db.close()
-    else:
-        anon_id = str(uuid.uuid4())[:8]
-        client_id = f"anon_{anon_id}"
-        username = "Visitante"
+    """
+    Endpoint WebSocket del avatar RAG EPN.
+    Completamente público — no requiere token ni autenticación.
+    Cada conexión recibe un client_id único anónimo para tracking interno.
+    """
+    anon_id = str(uuid.uuid4())[:8]
+    client_id = f"anon_{anon_id}"
+    username = "Visitante"
 
     ip = ""
     if websocket.client:
@@ -250,9 +246,6 @@ async def chat_websocket(
 
     except WebSocketDisconnect:
         manager.desconectar_usuario(client_id)
-    except AuthError:
-        await websocket.close(code=4401, reason="Token inválido")
-        manager.desconectar_usuario(client_id)
     except Exception as e:
         print(f"[WS ERROR] {client_id}: {e}")
         try:
@@ -264,12 +257,13 @@ async def chat_websocket(
             pass
         manager.desconectar_usuario(client_id)
 
+
+# ── MONITOR: requiere token de admin (sin cambios) ────────────────────────────
 @router.websocket("/monitor")
 async def monitor_websocket(
     websocket: WebSocket,
     token: str = Query(..., description="JWT token de admin"),
 ):
-
     db = SessionLocal()
     try:
         usuario = validate_token_ws(token, db)
@@ -296,6 +290,7 @@ async def monitor_websocket(
     finally:
         manager.desconectar_monitor(websocket)
 
+
 async def _procesar_pregunta(client_id: str, pregunta: str):
 
     if not pregunta.strip():
@@ -305,7 +300,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         })
         return
 
-    if not _check_rate_limit(client_id, max_por_minuto=15):
+    if not _check_rate_limit(client_id, max_por_minuto=60):
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["error"],
             "mensaje": "Demasiadas consultas seguidas. Espera un momento antes de continuar.",
