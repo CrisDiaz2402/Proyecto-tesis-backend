@@ -1,6 +1,7 @@
 # app/services/evaluacion_service.py
 import re
 import time
+import asyncio
 import traceback
 import numpy as np
 from datetime import datetime
@@ -22,7 +23,6 @@ def _score_semantico(
     umbral: float = 0.80,
 ) -> tuple[float, str]:
     try:
-        # ── Regla 1: respuestas negativas equivalentes ───────────────────────
         r_lower  = respuesta.strip().lower()
         e_lower  = respuesta_esperada.strip().lower()
         es_neg_r = any(f in r_lower for f in _FRASES_NEGATIVAS_EVAL)
@@ -38,7 +38,6 @@ def _score_semantico(
 
         similitud = round(float(np.dot(emb_resp, emb_esp)), 4)
 
-        # ── Regla 2: bonus numérico ──────────────────────────────────────────
         nums_r = set(re.findall(r'\b\d+\b', respuesta))
         nums_e = set(re.findall(r'\b\d+\b', respuesta_esperada))
         if nums_r and nums_r == nums_e:
@@ -125,7 +124,7 @@ def ejecutar_evaluacion(experimento: str, casos: list[dict]) -> dict:
     for caso in casos_activos:
         t0 = time.time()
         try:
-            respuesta = consultar_base_conocimiento(caso["pregunta"], motor=motor)
+            respuesta = asyncio.run(consultar_base_conocimiento(caso["pregunta"], motor=motor))
         except Exception as e:
             respuesta = f"Error interno al consultar el sistema: {e}"
         latencia_ms = round((time.time() - t0) * 1000)
@@ -163,16 +162,15 @@ def ejecutar_evaluacion_stream(
     for idx, caso in enumerate(casos_activos, start=1):
         t0 = time.time()
         try:
-            respuesta = consultar_base_conocimiento(caso["pregunta"], motor=motor)
+            respuesta = asyncio.run(consultar_base_conocimiento(caso["pregunta"], motor=motor))
         except Exception as e:
             respuesta = f"Error interno al consultar el sistema: {e}"
         latencia_ms = round((time.time() - t0) * 1000)
 
-        time.sleep(0.3)  # A) delay para evitar saturación de buffers en vLLM bajo --enforce-eager
+        time.sleep(0.3)
 
         umbral = caso.get("umbral_similitud", 0.80)
 
-        # B) Detectar respuestas inválidas o truncadas antes del scoring
         if (
             not respuesta
             or len(respuesta.strip()) < 3
@@ -181,7 +179,6 @@ def ejecutar_evaluacion_stream(
             print(f"[EVAL_STREAM] ⚠️ Caso id={caso['id']} — respuesta inválida, saltando scoring.")
             score, detalle, veredicto = 0.0, "Respuesta inválida o truncada del LLM", "ERROR"
         else:
-            # C) _score_semantico con su propio try/except independiente
             try:
                 score, detalle = _score_semantico(respuesta, caso["respuesta_esperada"], umbral)
                 veredicto = "PASS" if score == 1.0 else ("PARCIAL" if score == 0.5 else "FAIL")

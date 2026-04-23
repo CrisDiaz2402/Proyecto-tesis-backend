@@ -14,7 +14,7 @@ router = APIRouter(prefix="/api/usuarios", tags=["usuarios"])
 def crear_usuario(
     usuario: UsuarioCreate,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),   # 🔒 requiere JWT
+    _: models.Usuario = Depends(get_current_user),  
 ):
     usuario_existente = db.query(models.Usuario).filter(
         models.Usuario.username == usuario.username
@@ -36,7 +36,7 @@ def crear_usuario(
 @router.get("/", response_model=List[UsuarioOut])
 def listar_usuarios(
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),   # 🔒 requiere JWT
+    _: models.Usuario = Depends(get_current_user),   
 ):
     return db.query(models.Usuario).order_by(models.Usuario.fecha_creacion.desc()).all()
 
@@ -45,7 +45,7 @@ def actualizar_usuario(
     usuario_id: str,
     usuario_update: UsuarioUpdate,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),   # 🔒 requiere JWT
+    _: models.Usuario = Depends(get_current_user),  
 ):
     db_user = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
     if not db_user:
@@ -74,7 +74,7 @@ def actualizar_usuario(
 def eliminar_usuario(
     usuario_id: str,
     db: Session = Depends(get_db),
-    usuario_actual: models.Usuario = Depends(get_current_user),  # 🔒 requiere JWT
+    usuario_actual: models.Usuario = Depends(get_current_user),  
 ):
     if usuario_actual.id == usuario_id:
         raise HTTPException(status_code=400, detail="No puedes eliminarte a ti mismo.")

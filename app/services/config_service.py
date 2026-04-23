@@ -1,11 +1,14 @@
 import json
-import os
+import time
 from pathlib import Path
 
 from app.core.event_bus import event_bus
 from app.core.constants import COMBINACIONES_VALIDAS, MOTORES_VECTORES_VALIDOS, MOTORES_LLM_VALIDOS
 
 CONFIG_FILE = Path("./config_ia.json")
+
+_CONFIG_TTL = 10.0
+_config_cache: dict = {"data": None, "ts": 0.0}
 
 
 def _crear_config_si_no_existe():
@@ -21,18 +24,30 @@ def _migrar_config_si_es_vieja(data: dict) -> dict:
     return data
 
 
+def _invalidar_cache() -> None:
+    """Fuerza lectura desde disco en la próxima llamada."""
+    _config_cache["ts"] = 0.0
+
+
 def obtener_configuracion() -> dict:
+    if _config_cache["data"] is not None and (time.time() - _config_cache["ts"]) < _CONFIG_TTL:
+        return _config_cache["data"]
+
     _crear_config_si_no_existe()
     try:
         with open(CONFIG_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
             data = _migrar_config_si_es_vieja(data)
-            return {
+            result = {
                 "motor_vectores": data.get("motor_vectores", "local"),
                 "motor_llm":      data.get("motor_llm",      "local"),
             }
     except Exception:
-        return {"motor_vectores": "local", "motor_llm": "local"}
+        result = {"motor_vectores": "local", "motor_llm": "local"}
+
+    _config_cache["data"] = result
+    _config_cache["ts"] = time.time()
+    return result
 
 
 def obtener_motor_activo() -> str:
@@ -56,6 +71,9 @@ def cambiar_configuracion(motor_vectores: str, motor_llm: str) -> bool:
         with open(CONFIG_FILE, "w", encoding="utf-8") as f:
             json.dump({"motor_vectores": motor_vectores, "motor_llm": motor_llm}, f, indent=2)
         print(f"[CONFIG] ✅ Motor cambiado a {motor_vectores}:{motor_llm}")
+
+        _invalidar_cache()
+
         event_bus.publicar("motor_cambiado", {
             "motor_vectores": motor_vectores,
             "motor_llm": motor_llm,

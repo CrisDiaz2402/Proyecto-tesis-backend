@@ -1,20 +1,19 @@
-# app/services/rag_params_service.py
-
 from __future__ import annotations
 
+import time
 from typing import Any, Optional
 from sqlalchemy.orm import Session
 
 from app.db.database import SessionLocal
 from app.db import models
-from app.core.prompts import PROMPT_PRINCIPAL_DEFAULT
+from app.core.prompts import SYSTEM_PROMPT_FIJO, USER_TEMPLATE
 
 DEFAULTS: dict[str, Any] = {
     "umbral_relevancia_local": 0.05,
     "rag_k_local":             10,
-    "prompt_principal": PROMPT_PRINCIPAL_DEFAULT,
+    "prompt_principal":        USER_TEMPLATE + "\nRespuesta:",
+    "system_prompt":           SYSTEM_PROMPT_FIJO,
 }
-
 
 PARAM_LIMITS: dict[str, dict[str, Any]] = {
     "umbral_relevancia_local": {
@@ -31,13 +30,23 @@ PARAM_LIMITS: dict[str, dict[str, Any]] = {
     },
 }
 
-_CAMPOS_TEXTO = {"prompt_principal"}
+_CAMPOS_TEXTO = {"prompt_principal", "system_prompt"}
+
+_RAG_PARAMS_CACHE_TTL = 30.0
+
+_rag_params_cache: dict[str, Any] = {"data": None, "ts": 0.0}
+
+
+def _invalidar_cache_rag_params() -> None:
+    _rag_params_cache["ts"] = 0.0
+
 
 def _config_to_dict(config: models.ConfiguracionRAG) -> dict[str, Any]:
     return {
-        "umbral_relevancia_local":     config.umbral_relevancia_local,
-        "rag_k_local":                 config.rag_k_local,
-        "prompt_principal":            config.prompt_principal,
+        "umbral_relevancia_local": config.umbral_relevancia_local,
+        "rag_k_local":             config.rag_k_local,
+        "prompt_principal":        config.prompt_principal,
+        "system_prompt":           config.system_prompt,
     }
 
 
@@ -52,17 +61,26 @@ def _get_or_create(db: Session) -> models.ConfiguracionRAG:
         db.refresh(config)
     return config
 
+
 def get_params_con_db(db: Session) -> models.ConfiguracionRAG:
     return _get_or_create(db)
 
 
 def get_params() -> dict[str, Any]:
+    now = time.time()
+    if _rag_params_cache["data"] is not None and (now - _rag_params_cache["ts"]) < _RAG_PARAMS_CACHE_TTL:
+        return _rag_params_cache["data"]
+
     db = SessionLocal()
     try:
         config = _get_or_create(db)
-        return _config_to_dict(config)
+        data   = _config_to_dict(config)
     finally:
         db.close()
+
+    _rag_params_cache["data"] = data
+    _rag_params_cache["ts"]   = now
+    return data
 
 
 def validar_params(data: dict[str, Any]) -> dict[str, str]:
@@ -99,6 +117,8 @@ def actualizar_params(
     db.commit()
     db.refresh(config)
     new_state = _config_to_dict(config)
+
+    _invalidar_cache_rag_params()
     return old_state, new_state
 
 
@@ -113,6 +133,8 @@ def resetear_params(db: Session) -> tuple[dict[str, Any], dict[str, Any]]:
     db.commit()
     db.refresh(config)
     new_state = _config_to_dict(config)
+
+    _invalidar_cache_rag_params()
     return old_state, new_state
 
 
@@ -127,13 +149,13 @@ def determinar_limpieza(
     cambios = set(params_cambiados)
 
     prompt_cambio = bool(cambios & _CAMPOS_TEXTO)
-    limpiar_ll = prompt_cambio
-    limpiar_lc = prompt_cambio
+    limpiar_ll    = prompt_cambio
+    limpiar_lc    = prompt_cambio
 
     return {
-        "params_cambiados":         params_cambiados,
-        "limpiar_cache_ll":         limpiar_ll,
-        "limpiar_cache_lc":         limpiar_lc,
-        "limpiar_vectores_local":   False,
-        "requiere_reindexar":       False,
+        "params_cambiados":       params_cambiados,
+        "limpiar_cache_ll":       limpiar_ll,
+        "limpiar_cache_lc":       limpiar_lc,
+        "limpiar_vectores_local": False,
+        "requiere_reindexar":     False,
     }

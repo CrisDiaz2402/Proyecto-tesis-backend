@@ -5,7 +5,7 @@ from typing import Optional
 from app.db import models
 from app.db.deps import get_db
 from app.core.security import get_current_user
-from app.core.prompts import PROMPT_PRINCIPAL_DEFAULT
+from app.core.prompts import SYSTEM_PROMPT_FIJO, USER_TEMPLATE
 from app.services import rag_params_service
 from app.services.rag_params_service import (
     DEFAULTS,
@@ -16,10 +16,11 @@ from app.services.rag_params_service import (
 router = APIRouter(prefix="/api/rag-params", tags=["rag-params"])
 
 class RagParamsRequest(BaseModel):
-    # ── Parámetros con impacto demostrable ────────────────────────────────────
-    umbral_relevancia_local:     Optional[float] = Field(None, ge=0.05, le=0.50)
-    rag_k_local:                 Optional[int]   = Field(None, ge=2,    le=20)
-    prompt_principal:            Optional[str]   = Field(None)
+    umbral_relevancia_local: Optional[float] = Field(None, ge=0.05, le=0.50)
+    rag_k_local:             Optional[int]   = Field(None, ge=2,    le=20)
+    prompt_principal:        Optional[str]   = Field(None)
+    system_prompt:           Optional[str]   = Field(None)
+
 
 def _ejecutar_limpieza(limpieza: dict) -> list[str]:
     from app.services.cache_service import limpiar_cache
@@ -41,6 +42,7 @@ def _ejecutar_limpieza(limpieza: dict) -> list[str]:
 
     return acciones
 
+
 @router.get("", summary="Obtener parámetros RAG actuales con defaults y límites")
 def get_rag_params(
     db: Session = Depends(get_db),
@@ -50,13 +52,14 @@ def get_rag_params(
         config  = rag_params_service.get_params_con_db(db)
         current = rag_params_service._config_to_dict(config)
         return {
-            "ok":                   True,
-            "parametros_actuales":  current,
-            "defaults":             DEFAULTS,
-            "limites":              PARAM_LIMITS,
-            "fecha_actualizacion":  config.fecha_actualizacion,
+            "ok":                    True,
+            "parametros_actuales":   current,
+            "defaults":              DEFAULTS,
+            "limites":               PARAM_LIMITS,
+            "fecha_actualizacion":   config.fecha_actualizacion,
             "prompts_default_texto": {
-                "prompt_principal": PROMPT_PRINCIPAL_DEFAULT,
+                "prompt_principal": USER_TEMPLATE + "\nRespuesta:",
+                "system_prompt":    SYSTEM_PROMPT_FIJO,
             },
         }
     except Exception as e:
@@ -139,7 +142,6 @@ def reset_rag_params(
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(get_current_user),
 ):
-
     try:
         old_params, new_params = rag_params_service.resetear_params(db)
     except Exception as e:

@@ -85,7 +85,7 @@ def limpiar_solo_cache(
 
 @router.delete("/vectors/all", response_model=AccionGlobalResponse)
 def limpiar_vectores_y_cache(
-    motor: str = Query("local"),        # El único valor válido es "local"
+    motor: str = Query("local"),       
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(get_current_user),
 ):

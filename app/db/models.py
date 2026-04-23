@@ -1,4 +1,3 @@
-# app/db/models.py
 import uuid
 from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, Text, JSON
 from sqlalchemy.sql import func
@@ -30,13 +29,10 @@ class ConfiguracionRAG(Base):
     __tablename__ = "configuracion_rag"
 
     id = Column(Integer, primary_key=True, default=1)
-
     umbral_relevancia_local = Column(Float, default=0.15)
-
     rag_k_local = Column(Integer, default=10)
-
     prompt_principal = Column(Text, nullable=True, default=None)
-
+    system_prompt = Column(Text, nullable=True, default=None)
     fecha_actualizacion = Column(
         DateTime(timezone=True),
         server_default=func.now(),
@@ -90,20 +86,16 @@ class ConfiguracionNLU(Base):
     __tablename__ = "configuracion_nlu"
 
     id = Column(Integer, primary_key=True, default=1)
-
     palabras_saludo = Column(JSON, default=DEFAULTS_NLU["palabras_saludo"])
     frases_despedida = Column(JSON, default=DEFAULTS_NLU["frases_despedida"])
     frases_agradecimiento = Column(JSON, default=DEFAULTS_NLU["frases_agradecimiento"])
-
     palabras_lista_larga = Column(JSON, default=DEFAULTS_NLU["palabras_lista_larga"])
     frases_rechazo = Column(JSON, default=DEFAULTS_NLU["frases_rechazo"])
-
     mensaje_saludo = Column(Text, default=DEFAULTS_NLU["mensaje_saludo"])
     mensaje_despedida = Column(Text, default=DEFAULTS_NLU["mensaje_despedida"])
     mensaje_agradecimiento = Column(Text, default=DEFAULTS_NLU["mensaje_agradecimiento"])
     mensaje_fuera_de_tema = Column(Text, default=DEFAULTS_NLU["mensaje_fuera_de_tema"])
     mensaje_sin_resultados = Column(Text, default=DEFAULTS_NLU["mensaje_sin_resultados"])
-
     fecha_actualizacion = Column(
         DateTime(timezone=True),
         server_default=func.now(),

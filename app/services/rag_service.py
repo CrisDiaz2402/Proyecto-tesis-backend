@@ -3,6 +3,7 @@ import os
 import re
 import json
 import time
+import asyncio
 from typing import AsyncGenerator
 
 import httpx
@@ -19,9 +20,13 @@ from app.core.config import (
     VLLM_BASE_URL,
 )
 from app.services.rag_params_service import get_params
-from app.core.prompts import PROMPT_PRINCIPAL_DEFAULT as _PROMPT_PRINCIPAL_DEFAULT
+from app.core.prompts import SYSTEM_PROMPT_FIJO, USER_TEMPLATE
 from app.core.prompts import PROMPT_ERROR_FALLBACK
 from app.core.exceptions import LLMError
+from app.core.singletons import EmbedModelSingleton, HttpxClientSingleton
+
+# Fallback si la BD no tiene prompt guardado aún
+_PROMPT_PRINCIPAL_DEFAULT = SYSTEM_PROMPT_FIJO + "\n\n" + USER_TEMPLATE + "\nRespuesta:"
 
 from app.services.qdrant_service import (
     insertar_puntos,
@@ -35,21 +40,36 @@ from app.services.providers import crear_proveedor_llm
 
 genai.configure(api_key=GOOGLE_API_KEY)
 
-CHUNK_SIZE_LOCAL   = 400
-CHUNK_OVERLAP      = 50
-UMBRAL_BUSQUEDA_QDRANT = 0.02
-NUM_TOKENS_LOCAL   = 512
-NUM_TOKENS_CLOUD   = 1024
-MAX_MODEL_LEN      = 2048  
-MAX_CHARS_CONTEXTO = 3500   
+CHUNK_SIZE_LOCAL        = 400
+CHUNK_OVERLAP           = 50
+UMBRAL_BUSQUEDA_QDRANT  = 0.02
+NUM_TOKENS_LOCAL        = 512
+NUM_TOKENS_CLOUD        = 1024
+MAX_CHARS_CONTEXTO      = 2200
+
+_LLM_SEMAPHORE  = asyncio.Semaphore(3)
+_EMBED_SEMAPHORE = asyncio.Semaphore(6)
+
 
 def _generar_embedding(texto: str, motor: str) -> list[float]:
     proveedor = crear_proveedor_llm(motor)
     return proveedor.generar_embedding(texto)
 
-def _invocar_llm(prompt: str, motor_llm: str, num_tokens: int) -> str:
-    proveedor = crear_proveedor_llm(motor_llm)
-    return proveedor.generar_respuesta(prompt, num_tokens)
+
+async def _generar_embedding_async(texto: str, motor_vectores: str) -> list[float]:
+    async with _EMBED_SEMAPHORE:
+        loop = asyncio.get_event_loop()
+        return await loop.run_in_executor(
+            None,
+            lambda: EmbedModelSingleton().model.encode(texto, normalize_embeddings=True).tolist()
+        )
+
+
+async def _invocar_llm(prompt: str, motor_llm: str, num_tokens: int) -> str:
+    async with _LLM_SEMAPHORE:
+        proveedor = crear_proveedor_llm(motor_llm)
+        return await proveedor.generar_respuesta(prompt, num_tokens)
+
 
 def _split_text(texto: str, chunk_size: int, chunk_overlap: int) -> list[str]:
     separators = ["\n\n", "\n", ". ", " ", ""]
@@ -119,14 +139,12 @@ _FRASE_CANONICA_BASE = "no encontré información sobre"
 
 
 def _normalizar_respuesta_vacia(respuesta: str) -> str:
-
     resp_strip = respuesta.strip()
     if len(resp_strip) >= 200:
         return respuesta
     r_lower = resp_strip.lower()
     if _FRASE_CANONICA_BASE in r_lower:
         return respuesta
-    # Solo normalizar variantes NO canónicas
     if any(frase in r_lower for frase in _FRASES_VACIO):
         print("[RAG] 🔄 Respuesta normalizada a frase canónica de vacío.")
         return _MENSAJE_CANONICO_VACIO
@@ -156,8 +174,8 @@ PALABRAS_LISTA_LARGA = [
 
 
 def _es_pregunta_de_lista_larga(pregunta: str) -> bool:
-    from app.services.nlu_config_service import get_nlu_config
-    cfg = get_nlu_config()
+    from app.services.nlu_config_service import get_nlu_config_cached
+    cfg = get_nlu_config_cached()
     palabras = cfg.get("palabras_lista_larga", PALABRAS_LISTA_LARGA)
     return any(k in pregunta.lower() for k in palabras)
 
@@ -187,6 +205,8 @@ def _get_num_tokens(motor_llm: str) -> int:
 
 
 def _get_retrieval_params(motor_vectores: str) -> tuple[int, float]:
+    # BUG #3 CORREGIDO: get_params() ahora usa caché en memoria (ver
+    # rag_params_service.py). Esta llamada ya no abre SessionLocal cada vez.
     params = get_params()
     return (
         params.get("rag_k_local", 10),
@@ -220,13 +240,13 @@ def procesar_y_guardar_documento(filepath: str, motor: str = "local") -> dict:
 
     print(f"[RAG] 📄 Text splitting ({chunk_size} chars + {CHUNK_OVERLAP} overlap): {len(fragmentos)} fragmentos generados.")
 
-    embedder = proveedor
+    embedder   = proveedor
     embeddings = [embedder.generar_embedding(fragmento) for fragmento in fragmentos]
-    payloads = [
+    payloads   = [
         {
             "document_name": nombre_coleccion,
-            "contenido": fragmento,
-            "metadata": json.dumps({"source": filepath, **meta_extra}),
+            "contenido":     fragmento,
+            "metadata":      json.dumps({"source": filepath, **meta_extra}),
         }
         for fragmento in fragmentos
     ]
@@ -260,11 +280,11 @@ def _buscar_chunks_similares(
 
 class PipelineRAGBuilder:
     def __init__(self):
-        self._pregunta = ""
-        self._chunks = []
+        self._pregunta      = ""
+        self._chunks        = []
         self._prompt_template = ""
-        self._motor_llm = "local"
-        self._num_tokens = 512
+        self._motor_llm     = "local"
+        self._num_tokens    = 512
 
     def set_pregunta(self, pregunta: str) -> "PipelineRAGBuilder":
         self._pregunta = pregunta
@@ -288,7 +308,7 @@ class PipelineRAGBuilder:
 
     def build(self) -> dict:
         chunks_seleccionados = []
-        chars_acumulados = 0
+        chars_acumulados     = 0
         for chunk in self._chunks:
             contenido = chunk["contenido"]
             if chars_acumulados + len(contenido) > MAX_CHARS_CONTEXTO:
@@ -301,16 +321,28 @@ class PipelineRAGBuilder:
             primer_chunk["contenido"] = self._chunks[0]["contenido"][:MAX_CHARS_CONTEXTO]
             chunks_seleccionados = [primer_chunk]
 
-        print(f"[RAG] 📦 Chunks usados: {len(chunks_seleccionados)}/{len(self._chunks)} "
-              f"({chars_acumulados} chars de contexto)")
+        print(
+            f"[RAG] 📦 Chunks usados: {len(chunks_seleccionados)}/{len(self._chunks)} "
+            f"({chars_acumulados} chars de contexto)"
+        )
 
         contexto  = "\n\n---\n\n".join([c["contenido"] for c in chunks_seleccionados])
         prompt_ia = self._prompt_template.format(contexto=contexto, pregunta=self._pregunta)
+
+        LIMITE_TOKENS_ENTRADA = 1200
+
+        if len(prompt_ia) / 3.5 > LIMITE_TOKENS_ENTRADA:
+            overhead = len(prompt_ia) - len(contexto)
+            max_contexto = max(0, int(LIMITE_TOKENS_ENTRADA * 3.5) - overhead)
+            contexto = contexto[:max_contexto]
+            prompt_ia = self._prompt_template.format(contexto=contexto, pregunta=self._pregunta)
+
         return {
-            "prompt":    prompt_ia,
-            "motor_llm": self._motor_llm,
+            "prompt":     prompt_ia,
+            "contexto":   contexto,
+            "motor_llm":  self._motor_llm,
             "num_tokens": self._num_tokens,
-            "coleccion": chunks_seleccionados[0]["coleccion"] if chunks_seleccionados else "desconocido",
+            "coleccion":  chunks_seleccionados[0]["coleccion"] if chunks_seleccionados else "desconocido",
         }
 
 _PATRONES_AFIRMACION = [
@@ -331,26 +363,45 @@ def _reescribir_query_para_retrieval(pregunta: str) -> str:
     return pregunta
 
 
-def _consultar_rag_puro(pregunta: str, motor: str = "local") -> tuple[str, str]:
+def _get_system_prompt_from_db() -> str:
+    params = get_params()
+    return params.get("system_prompt") or SYSTEM_PROMPT_FIJO
 
+
+def _get_prompt_template_from_db() -> str:
+    params = get_params()
+    return params.get("prompt_principal") or _PROMPT_PRINCIPAL_DEFAULT
+
+
+async def _consultar_rag_puro(
+    pregunta: str,
+    motor: str = "local",
+    embedding_precalculado: list[float] | None = None,
+) -> tuple[str, str]:
     motor_vectores, motor_llm = _parsear_motor(motor)
 
     query_retrieval = _reescribir_query_para_retrieval(pregunta)
-    query_embedding = _generar_embedding(query_retrieval, motor_vectores)
+    if embedding_precalculado is not None:
+        query_embedding = embedding_precalculado
+    else:
+        query_embedding = await _generar_embedding_async(query_retrieval, motor_vectores)
 
     k_retrieval, umbral = _get_retrieval_params(motor_vectores)
     resultados = _buscar_chunks_similares(query_embedding, motor_vectores, k_retrieval, umbral)
 
     if not resultados:
-        from app.services.nlu_config_service import get_nlu_config
+        # BUG #4: usa la versión cacheada
+        from app.services.nlu_config_service import get_nlu_config_cached
         return (
-            get_nlu_config().get("mensaje_sin_resultados", "No encontré información sobre eso en los documentos académicos disponibles."),
+            get_nlu_config_cached().get(
+                "mensaje_sin_resultados",
+                "No encontré información sobre eso en los documentos académicos disponibles.",
+            ),
             "desconocido",
         )
 
     num_tokens = _get_num_tokens(motor_llm)
-    params     = get_params()
-    plantilla  = params.get("prompt_principal") or _PROMPT_PRINCIPAL_DEFAULT
+    plantilla  = _get_prompt_template_from_db()
 
     pipeline = (
         PipelineRAGBuilder()
@@ -363,7 +414,11 @@ def _consultar_rag_puro(pregunta: str, motor: str = "local") -> tuple[str, str]:
     )
 
     try:
-        respuesta = _invocar_llm(pipeline["prompt"], pipeline["motor_llm"], pipeline["num_tokens"])
+        respuesta = await _invocar_llm(
+            pipeline["prompt"],
+            pipeline["motor_llm"],
+            pipeline["num_tokens"],
+        )
     except LLMError as e:
         print(f"[RAG] ❌ LLM falló: {e}")
         return PROMPT_ERROR_FALLBACK, "error"
@@ -372,40 +427,68 @@ def _consultar_rag_puro(pregunta: str, motor: str = "local") -> tuple[str, str]:
     if _detectar_idioma_incorrecto(respuesta):
         print("[RAG] ⚠️ Respuesta en idioma incorrecto detectada, usando fallback.")
         respuesta = _MENSAJE_CANONICO_VACIO
+
     documento_origen = resultados[0]["coleccion"]
     return respuesta, documento_origen
 
-def consultar_base_conocimiento(pregunta: str, motor: str = "local") -> str:
+
+async def consultar_base_conocimiento(pregunta: str, motor: str = "local") -> str:
     partes = motor.split(":", 1) if ":" in motor else (motor, motor)
     motor_vectores, motor_llm = partes[0], partes[1]
 
+    try:
+        embedding = await _generar_embedding_async(pregunta, motor_vectores)
+    except Exception as e:
+        print(f"[RAG] ⚠️ No se pudo generar embedding: {e}. Continuando sin búsqueda semántica en caché.")
+        embedding = None
+
     from app.services.cache_service import buscar_en_cache, guardar_en_cache
-    cached = buscar_en_cache(pregunta, motor_vectores=motor_vectores, motor_llm=motor_llm)
+
+    cached = buscar_en_cache(
+        pregunta,
+        motor_vectores=motor_vectores,
+        motor_llm=motor_llm,
+        embedding=embedding,
+    )
     if cached:
         print(f"[CACHE] ⚡ Hit ({motor_vectores}:{motor_llm})")
         return cached
 
     t0 = time.time()
-    respuesta, documento_origen = _consultar_rag_puro(pregunta, motor)
+    respuesta, documento_origen = await _consultar_rag_puro(
+        pregunta,
+        motor,
+        embedding_precalculado=embedding,
+    )
     print(f"[RAG] ✅ Consulta completada en {round(time.time() - t0, 2)}s")
 
-    guardar_en_cache(pregunta, respuesta, documento_origen=documento_origen, motor_vectores=motor_vectores, motor_llm=motor_llm)
+    guardar_en_cache(
+        pregunta,
+        respuesta,
+        documento_origen=documento_origen,
+        motor_vectores=motor_vectores,
+        motor_llm=motor_llm,
+        embedding=embedding,
+    )
     return respuesta
 
 async def pipeline_streaming(pregunta: str, motor: str = "local"):
     motor_vectores, motor_llm = _parsear_motor(motor)
 
-    query_embedding = _generar_embedding(pregunta, motor_vectores)
+    query_embedding = await _generar_embedding_async(pregunta, motor_vectores)
     k_retrieval, umbral = _get_retrieval_params(motor_vectores)
     resultados = _buscar_chunks_similares(query_embedding, motor_vectores, k_retrieval, umbral)
 
     if not resultados:
-        from app.services.nlu_config_service import get_nlu_config
-        yield get_nlu_config().get("mensaje_sin_resultados", "No encontré información sobre eso en los documentos académicos disponibles.")
+        from app.services.nlu_config_service import get_nlu_config_cached
+        yield get_nlu_config_cached().get(
+            "mensaje_sin_resultados",
+            "No encontré información sobre eso en los documentos académicos disponibles.",
+        )
         return
 
-    params = get_params()
-    plantilla = params.get("prompt_principal") or _PROMPT_PRINCIPAL_DEFAULT
+    plantilla = _get_prompt_template_from_db()
+    system_prompt = _get_system_prompt_from_db()
 
     pipeline = (
         PipelineRAGBuilder()
@@ -417,16 +500,27 @@ async def pipeline_streaming(pregunta: str, motor: str = "local"):
         .build()
     )
 
-    async for token in generar_respuesta_stream_local(pipeline["prompt"], pipeline["num_tokens"]):
+    user_content = USER_TEMPLATE.format(contexto=pipeline["contexto"], pregunta=pregunta)
+    async for token in generar_respuesta_stream_local(
+        system_prompt, user_content, pipeline["num_tokens"]
+    ):
         yield token
 
-async def generar_respuesta_stream_local(prompt: str, num_tokens: int = 512) -> AsyncGenerator[str, None]:
+
+async def generar_respuesta_stream_local(
+    system_prompt: str,
+    user_content: str,
+    num_tokens: int = 512,
+) -> AsyncGenerator[str, None]:
     import json as _json
 
     url = f"{VLLM_BASE_URL}/chat/completions"
     payload = {
         "model": LLM_MODEL_LOCAL,
-        "messages": [{"role": "user", "content": prompt}],
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user",   "content": user_content},
+        ],
         "max_tokens": num_tokens,
         "temperature": 0,
         "top_p": 0.9,
@@ -434,20 +528,20 @@ async def generar_respuesta_stream_local(prompt: str, num_tokens: int = 512) -> 
         "stop": ["Consulta del usuario:", "Usuario:", "Pregunta:", "[FIN]"],
     }
 
-    async with httpx.AsyncClient(timeout=120.0) as client:
-        async with client.stream("POST", url, json=payload) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if not line.startswith("data: "):
-                    continue
-                data_str = line[len("data: "):]
-                if data_str.strip() == "[DONE]":
-                    break
-                try:
-                    chunk = _json.loads(data_str)
-                    delta = chunk["choices"][0].get("delta", {})
-                    content = delta.get("content", "")
-                    if content:
-                        yield content
-                except (KeyError, _json.JSONDecodeError):
-                    continue
+    client = HttpxClientSingleton().client
+    async with client.stream("POST", url, json=payload) as response:
+        response.raise_for_status()
+        async for line in response.aiter_lines():
+            if not line.startswith("data: "):
+                continue
+            data_str = line[len("data: "):]
+            if data_str.strip() == "[DONE]":
+                break
+            try:
+                chunk   = _json.loads(data_str)
+                delta   = chunk["choices"][0].get("delta", {})
+                content = delta.get("content", "")
+                if content:
+                    yield content
+            except (KeyError, _json.JSONDecodeError):
+                continue

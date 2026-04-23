@@ -29,3 +29,9 @@ class RedisClientSingleton(metaclass=_SingletonMeta):
 class EmbedModelSingleton(metaclass=_SingletonMeta):
     def __init__(self):
         self.model = SentenceTransformer(EMBED_MODEL_LOCAL, device="cpu")
+
+
+class HttpxClientSingleton(metaclass=_SingletonMeta):
+    def __init__(self):
+        import httpx
+        self.client = httpx.AsyncClient(timeout=120.0)

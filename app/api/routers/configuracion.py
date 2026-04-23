@@ -22,7 +22,7 @@ class ConfigRequest(BaseModel):
 
 @router.get("/motor", response_model=ConfigResponse)
 def get_motor(
-    _: models.Usuario = Depends(get_current_user)  # 🔒 Protegido con JWT
+    _: models.Usuario = Depends(get_current_user)  
 ):
     try:
         config = obtener_configuracion()
@@ -33,7 +33,7 @@ def get_motor(
 @router.put("/motor")
 def update_motor(
     request: ConfigRequest,
-    _: models.Usuario = Depends(get_current_user)  # 🔒 Protegido con JWT
+    _: models.Usuario = Depends(get_current_user)  
 ):
     try:
         combinacion = (request.motor_vectores, request.motor_llm)

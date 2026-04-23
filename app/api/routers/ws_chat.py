@@ -183,10 +183,6 @@ manager = ConnectionManager()
 
 
 def _check_rate_limit(client_id: str, max_por_minuto: int = 60) -> bool:
-    """
-    Límite de consultas por minuto por cliente.
-    En producción puedes bajar este valor a 15.
-    """
     try:
         from app.core.singletons import RedisClientSingleton
         r = RedisClientSingleton().client
@@ -201,19 +197,13 @@ def _check_rate_limit(client_id: str, max_por_minuto: int = 60) -> bool:
         r.expire(key, ventana + 5)
         return True
     except Exception:
-        return True  # fail-open: si Redis falla, no bloquear al usuario
+        return True  
 
 
-# ── AVATAR: 100% público, sin autenticación ───────────────────────────────────
 @router.websocket("/chat")
 async def chat_websocket(
     websocket: WebSocket,
 ):
-    """
-    Endpoint WebSocket del avatar RAG EPN.
-    Completamente público — no requiere token ni autenticación.
-    Cada conexión recibe un client_id único anónimo para tracking interno.
-    """
     anon_id = str(uuid.uuid4())[:8]
     client_id = f"anon_{anon_id}"
     username = "Visitante"
@@ -258,7 +248,6 @@ async def chat_websocket(
         manager.desconectar_usuario(client_id)
 
 
-# ── MONITOR: requiere token de admin (sin cambios) ────────────────────────────
 @router.websocket("/monitor")
 async def monitor_websocket(
     websocket: WebSocket,
@@ -338,7 +327,6 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         })
         return
 
-    # ── Pipeline RAG (intención = consulta_academica) ───────────────────
     motor_actual = obtener_motor_activo()
     consulta = manager.iniciar_consulta(client_id, pregunta, motor_actual)
     query_id = consulta.id
@@ -359,12 +347,29 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
             from app.services.rag_service import (
                 _generar_embedding, _buscar_chunks_similares,
                 _get_retrieval_params, _get_num_tokens,
+                _get_system_prompt_from_db,   
+                _EMBED_SEMAPHORE,
             )
             from app.services.rag_params_service import get_params
-            from app.core.prompts import PROMPT_PRINCIPAL_DEFAULT
+            from app.core.prompts import USER_TEMPLATE
             from app.services.cache_service import buscar_en_cache, guardar_en_cache
 
-            cached = buscar_en_cache(pregunta, motor_vectores=motor_vectores, motor_llm=motor_llm)
+            loop = asyncio.get_event_loop()
+            try:
+                async with _EMBED_SEMAPHORE:
+                    query_embedding = await loop.run_in_executor(
+                        None, lambda: _generar_embedding(pregunta, motor_vectores)
+                    )
+            except Exception as e:
+                print(f"[WS RAG] ⚠️ No se pudo generar embedding: {e}")
+                query_embedding = None
+
+            cached = buscar_en_cache(
+                pregunta,
+                motor_vectores=motor_vectores,
+                motor_llm=motor_llm,
+                embedding=query_embedding,
+            )
             if cached:
                 latencia = int((time.time() - t_inicio) * 1000)
                 await manager.send_to_user(client_id, {
@@ -376,11 +381,17 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                     "timestamp": time.time(),
                 })
                 manager.finalizar_consulta(query_id, latencia, cache=True)
+            elif query_embedding is None:
+                latencia = int((time.time() - t_inicio) * 1000)
+                await manager.send_to_user(client_id, {
+                    "tipo": "respuesta",
+                    "pregunta": pregunta,
+                    "respuesta": nlu_cfg["mensaje_sin_resultados"],
+                    "motor": motor_actual,
+                    "timestamp": time.time(),
+                })
+                manager.finalizar_consulta(query_id, latencia, cache=False)
             else:
-                loop = asyncio.get_event_loop()
-                query_embedding = await loop.run_in_executor(
-                    None, lambda: _generar_embedding(pregunta, motor_vectores)
-                )
                 k_retrieval, umbral = _get_retrieval_params(motor_vectores)
                 resultados = _buscar_chunks_similares(
                     query_embedding, motor_vectores, k_retrieval, umbral
@@ -398,10 +409,11 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                     manager.finalizar_consulta(query_id, latencia, cache=False)
                 else:
                     contexto = "\n\n---\n\n".join([r["contenido"] for r in resultados])
-                    params = get_params()
-                    plantilla = params.get("prompt_principal") or PROMPT_PRINCIPAL_DEFAULT
-                    prompt_ia = plantilla.format(contexto=contexto, pregunta=pregunta)
+                    user_content = USER_TEMPLATE.format(contexto=contexto, pregunta=pregunta)
                     num_tokens = _get_num_tokens(motor_llm)
+
+                    # ✅ CORREGIDO: system prompt viene de BD, no hardcodeado
+                    system_prompt = _get_system_prompt_from_db()
 
                     await manager.send_to_user(client_id, {
                         "tipo": TIPOS_WEBSOCKET["estado"],
@@ -409,7 +421,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                     })
 
                     respuesta_completa = ""
-                    async for token in generar_respuesta_stream_local(prompt_ia, num_tokens):
+                    async for token in generar_respuesta_stream_local(system_prompt, user_content, num_tokens):
                         respuesta_completa += token
                         await manager.send_to_user(client_id, {
                             "tipo": TIPOS_WEBSOCKET["token"],
@@ -417,11 +429,14 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                         })
 
                     coleccion = resultados[0]["coleccion"] if resultados else "desconocido"
+
                     guardar_en_cache(
-                        pregunta, respuesta_completa,
+                        pregunta,
+                        respuesta_completa,
                         documento_origen=coleccion,
                         motor_vectores=motor_vectores,
                         motor_llm=motor_llm,
+                        embedding=query_embedding,
                     )
 
                     latencia = int((time.time() - t_inicio) * 1000)
@@ -440,11 +455,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                 "mensaje": f"Generando respuesta (motor: {motor_actual})...",
             })
 
-            loop = asyncio.get_event_loop()
-            respuesta = await loop.run_in_executor(
-                None,
-                lambda: consultar_base_conocimiento(pregunta, motor=motor_actual),
-            )
+            respuesta = await consultar_base_conocimiento(pregunta, motor=motor_actual)
 
             latencia = int((time.time() - t_inicio) * 1000)
             await manager.send_to_user(client_id, {

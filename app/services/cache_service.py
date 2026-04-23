@@ -6,9 +6,11 @@ from typing import Optional
 
 from app.core.singletons import RedisClientSingleton
 
-TTL_DEFAULT = 60 * 60 * 24
+TTL_DEFAULT  = 60 * 60 * 24
 TTL_EXTENDED = 60 * 60 * 24 * 7
-UMBRAL_SIMILITUD_CACHE = 0.02
+
+UMBRAL_SIMILITUD_CACHE = 0.12   
+MAX_SCAN_SEMANTICO     = 200  
 
 def _get_redis():
     return RedisClientSingleton().client
@@ -43,8 +45,9 @@ def _es_respuesta_cacheable(respuesta: str) -> bool:
     if "Error interno al consultar" in respuesta:
         print("[REDIS_CACHE] ⚠️  Respuesta de error NO cacheada.")
         return False
-    from app.services.nlu_config_service import get_nlu_config
-    cfg = get_nlu_config()
+
+    from app.services.nlu_config_service import get_nlu_config_cached
+    cfg = get_nlu_config_cached()
     frases_rechazo = cfg.get("frases_rechazo", [])
     for frase in frases_rechazo:
         if frase.lower() in texto:
@@ -57,7 +60,7 @@ def _es_respuesta_cacheable(respuesta: str) -> bool:
 
 
 def _cosine_similarity(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b))
+    dot    = sum(x * y for x, y in zip(a, b))
     norm_a = sum(x * x for x in a) ** 0.5
     norm_b = sum(x * x for x in b) ** 0.5
     if norm_a == 0 or norm_b == 0:
@@ -66,10 +69,10 @@ def _cosine_similarity(a: list[float], b: list[float]) -> float:
 
 
 class CacheProxy:
-    _failures = 0
+    _failures          = 0
     _circuit_open_until = 0.0
-    MAX_FAILURES = 3
-    CIRCUIT_COOLDOWN = 30
+    MAX_FAILURES       = 3
+    CIRCUIT_COOLDOWN   = 30
 
     def buscar(self, pregunta: str, motor_vectores: str, motor_llm: str, **kwargs) -> Optional[str]:
         if not self._puede_conectar():
@@ -110,6 +113,7 @@ class CacheProxy:
 
 cache_proxy = CacheProxy()
 
+
 def _buscar_en_redis(
     pregunta: str,
     motor_vectores: str,
@@ -119,40 +123,47 @@ def _buscar_en_redis(
     r = _get_redis()
 
     pregunta_hash = _hash_pregunta(pregunta)
-    key = _cache_key(motor_vectores, motor_llm, pregunta_hash)
-
+    key  = _cache_key(motor_vectores, motor_llm, pregunta_hash)
     data = r.hgetall(key)
     if data and "respuesta" in data:
-        print(
-            f"[REDIS_CACHE] ✅ Hit exacto "
-            f"(modo={motor_vectores}:{motor_llm})"
-        )
+        print(f"[REDIS_CACHE] ✅ Hit exacto (modo={motor_vectores}:{motor_llm})")
         return data["respuesta"]
 
     if embedding is not None:
-        pattern = _pattern_key(motor_vectores, motor_llm)
-        min_score = 1 - UMBRAL_SIMILITUD_CACHE
-        best_score = 0.0
+        pattern   = _pattern_key(motor_vectores, motor_llm)
+        min_score = 1.0 - UMBRAL_SIMILITUD_CACHE   # 0.88
+        best_score     = 0.0
         best_respuesta = None
+        scanned        = 0
 
         for k in _iterar_claves_redis(r, pattern):
+            if scanned >= MAX_SCAN_SEMANTICO:
+                print(
+                    f"[REDIS_CACHE] ⚠️ Scan semántico limitado a {MAX_SCAN_SEMANTICO} claves"
+                )
+                break
+            scanned += 1
+
             cached = r.hgetall(k)
             if "embedding" not in cached or "respuesta" not in cached:
                 continue
             try:
                 cached_emb = json.loads(cached["embedding"])
-                score = _cosine_similarity(embedding, cached_emb)
+                score      = _cosine_similarity(embedding, cached_emb)
                 if score >= min_score and score > best_score:
-                    best_score = score
+                    best_score     = score
                     best_respuesta = cached["respuesta"]
+                    # Early exit: si el score es muy alto, no hay que seguir buscando
+                    if best_score >= 0.97:
+                        break
             except (json.JSONDecodeError, TypeError):
                 continue
 
         if best_respuesta:
             print(
                 f"[REDIS_CACHE] ✅ Hit semántico "
-                f"(score={best_score:.3f}, umbral_sim={UMBRAL_SIMILITUD_CACHE:.3f}, "
-                f"modo={motor_vectores}:{motor_llm})"
+                f"(score={best_score:.3f}, umbral_sim={1.0 - UMBRAL_SIMILITUD_CACHE:.2f}, "
+                f"modo={motor_vectores}:{motor_llm}, scanned={scanned})"
             )
             return best_respuesta
 
@@ -172,17 +183,17 @@ def _guardar_en_redis(
         print("[REDIS_CACHE] ⚠️ Respuesta no cacheada (inválida, truncada o rechazo).")
         return
 
-    r = _get_redis()
+    r             = _get_redis()
     pregunta_hash = _hash_pregunta(pregunta)
-    key = _cache_key(motor_vectores, motor_llm, pregunta_hash)
+    key           = _cache_key(motor_vectores, motor_llm, pregunta_hash)
 
     entry = {
-        "pregunta": pregunta,
-        "respuesta": respuesta,
+        "pregunta":         pregunta,
+        "respuesta":        respuesta,
         "documento_origen": documento_origen,
-        "motor_vectores": motor_vectores,
-        "motor_llm": motor_llm,
-        "timestamp": str(time.time()),
+        "motor_vectores":   motor_vectores,
+        "motor_llm":        motor_llm,
+        "timestamp":        str(time.time()),
     }
 
     if embedding is not None:
@@ -217,12 +228,12 @@ def _limpiar_redis(
     for mv, ml in combis:
         pattern = _pattern_key(mv, ml)
         deleted = 0
-        batch = []
+        batch   = []
         for key in _iterar_claves_redis(r, pattern, count=200):
             batch.append(key)
             if len(batch) >= 200:
                 deleted += r.delete(*batch)
-                batch = []
+                batch    = []
         if batch:
             deleted += r.delete(*batch)
         resultados.append(f"caché {mv}:{ml} limpiado ({deleted})")
@@ -259,18 +270,12 @@ def _limpiar_redis_por_documento(
 
     return {"mensaje": f"Caché del documento '{nombre_coleccion}' procesado: {' | '.join(resultados)}"}
 
-
-def _generar_embedding_para_cache(texto: str, motor_vectores: str) -> list[float]:
-    from app.services.rag_service import _generar_embedding
-    return _generar_embedding(texto, motor_vectores)
-
-
-def buscar_en_cache(pregunta: str, motor_vectores: str, motor_llm: str) -> Optional[str]:
-    try:
-        embedding = _generar_embedding_para_cache(pregunta, motor_vectores)
-    except Exception:
-        embedding = None
-
+def buscar_en_cache(
+    pregunta: str,
+    motor_vectores: str,
+    motor_llm: str,
+    embedding: Optional[list[float]] = None,
+) -> Optional[str]:
     return cache_proxy.buscar(
         pregunta=pregunta,
         motor_vectores=motor_vectores,
@@ -285,12 +290,8 @@ def guardar_en_cache(
     documento_origen: str = "desconocido",
     motor_vectores: str = "local",
     motor_llm: str = "local",
+    embedding: Optional[list[float]] = None,
 ) -> None:
-    try:
-        embedding = _generar_embedding_para_cache(pregunta, motor_vectores)
-    except Exception:
-        embedding = None
-
     cache_proxy.guardar(
         pregunta=pregunta,
         respuesta=respuesta,

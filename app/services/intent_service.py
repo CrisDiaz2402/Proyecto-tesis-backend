@@ -34,5 +34,4 @@ def detectar_intencion(
                 return {"intencion": "consulta_academica", "confianza": 0.8}
             return {"intencion": "saludo", "confianza": 0.95}
 
-    # Por defecto: consulta académica
     return {"intencion": "consulta_academica", "confianza": 0.7}

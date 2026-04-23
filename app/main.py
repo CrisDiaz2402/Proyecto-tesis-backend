@@ -16,6 +16,7 @@ from app.api.routers import rag_params
 from app.api.routers import evaluacion  
 from app.api.routers import ws_chat  
 from app.api.routers import nlu_config
+from app.api.routers import cache_admin
 
 models.Base.metadata.create_all(bind=engine)
 
@@ -66,13 +67,9 @@ async def lifespan(app: FastAPI):
         if config_motor.get("motor_llm") == "local":
             motor_activo = obtener_motor_activo()
             print(f"[STARTUP] 🔥 Precalentando modelo local (motor: {motor_activo})...")
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: consultar_base_conocimiento(
-                    "¿Cuántos créditos necesito para graduarme?",
-                    motor=motor_activo,
-                ),
+            await consultar_base_conocimiento(
+                "¿Cuántos créditos necesito para graduarme?",
+                motor=motor_activo,
             )
             print("[STARTUP] ✅ Precalentamiento completado.")
         else:
@@ -124,6 +121,7 @@ app.include_router(rag_params.router)
 app.include_router(evaluacion.router)
 app.include_router(ws_chat.router)
 app.include_router(nlu_config.router)
+app.include_router(cache_admin.router)
 
 Instrumentator().instrument(app).expose(app)
 

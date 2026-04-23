@@ -1,17 +1,11 @@
-# ============================================================
-# Dockerfile.backend — FastAPI (Tesis)
-# ============================================================
-# Usa Python 3.11 con CUDA 12.1 para compatibilidad con torch/vLLM
 FROM python:3.11-slim
 
-# Evitar prompts interactivos durante instalación
 ENV DEBIAN_FRONTEND=noninteractive
 ENV PYTHONDONTWRITEBYTECODE=1
 ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
-# Dependencias del sistema necesarias para psycopg2, pymupdf, etc.
 RUN apt-get update && apt-get install -y \
     gcc \
     g++ \
@@ -21,55 +15,15 @@ RUN apt-get update && apt-get install -y \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar requirements primero (aprovecha cache de Docker)
 COPY requirements.txt .
 
-# Instalar dependencias Python
-# Nota: torch, vllm y paquetes CUDA pesados NO van aquí — van en el contenedor vLLM
 RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir \
-        fastapi \
-        uvicorn[standard] \
-        sqlalchemy \
-        alembic \
-        psycopg2-binary \
-        redis \
-        qdrant-client \
-        python-jose[cryptography] \
-        passlib[bcrypt] \
-        python-multipart \
-        python-dotenv \
-        httpx \
-        pydantic-settings \
-        openai \
-        anthropic \
-        google-generativeai \
-        sentence-transformers \
-        pymupdf \
-        pymupdf4llm \
-        docx2txt \
-        scikit-learn \
-        loguru \
-        prometheus-fastapi-instrumentator \
-        prometheus_client \
-        sentry-sdk \
-        PyJWT \
-        bcrypt \
-        pycountry \
-        tabulate \
-        sse-starlette \
-        opentelemetry-api \
-        opentelemetry-sdk
+    pip install --no-cache-dir -r requirements.txt
 
-# Copiar código de la aplicación
 COPY . .
 
-# Crear directorio de documentos si no existe
 RUN mkdir -p documents_local
 
-# Puerto que expone FastAPI
 EXPOSE 8000
 
-# Comando de inicio
-# En producción: quitar --reload
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

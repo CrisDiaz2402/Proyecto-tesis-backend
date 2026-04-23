@@ -14,11 +14,7 @@ async def consultar_ia(request: PreguntaRequest):
     motor_actual = obtener_motor_activo()
 
     try:
-        loop = asyncio.get_event_loop()
-        respuesta = await loop.run_in_executor(
-            None,
-            lambda: consultar_base_conocimiento(request.pregunta, motor=motor_actual)
-        )
+        respuesta = await consultar_base_conocimiento(request.pregunta, motor=motor_actual)
         return ChatResponse(
             pregunta_original=request.pregunta,
             respuesta=respuesta
