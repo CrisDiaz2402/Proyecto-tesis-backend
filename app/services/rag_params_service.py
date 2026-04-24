@@ -6,14 +6,9 @@ from sqlalchemy.orm import Session
 
 from app.db.database import SessionLocal
 from app.db import models
-from app.core.prompts import SYSTEM_PROMPT_FIJO, USER_TEMPLATE
+from app.core.defaults import DEFAULTS_RAG
 
-DEFAULTS: dict[str, Any] = {
-    "umbral_relevancia_local": 0.05,
-    "rag_k_local":             10,
-    "prompt_principal":        USER_TEMPLATE + "\nRespuesta:",
-    "system_prompt":           SYSTEM_PROMPT_FIJO,
-}
+DEFAULTS = DEFAULTS_RAG
 
 PARAM_LIMITS: dict[str, dict[str, Any]] = {
     "umbral_relevancia_local": {

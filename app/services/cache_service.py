@@ -43,7 +43,6 @@ def _es_respuesta_cacheable(respuesta: str) -> bool:
         return False
     texto = respuesta.lower().strip()
     if "Error interno al consultar" in respuesta:
-        print("[REDIS_CACHE] ⚠️  Respuesta de error NO cacheada.")
         return False
 
     from app.services.nlu_config_service import get_nlu_config_cached
@@ -105,7 +104,7 @@ class CacheProxy:
         self._failures += 1
         if self._failures >= self.MAX_FAILURES:
             self._circuit_open_until = time.time() + self.CIRCUIT_COOLDOWN
-            print(f"[CACHE PROXY] ⚠️ Circuit breaker abierto por {self.CIRCUIT_COOLDOWN}s")
+            print(f"[CACHE PROXY]  Circuit breaker abierto por {self.CIRCUIT_COOLDOWN}s")
 
     def _registrar_exito(self):
         self._failures = 0
@@ -126,12 +125,12 @@ def _buscar_en_redis(
     key  = _cache_key(motor_vectores, motor_llm, pregunta_hash)
     data = r.hgetall(key)
     if data and "respuesta" in data:
-        print(f"[REDIS_CACHE] ✅ Hit exacto (modo={motor_vectores}:{motor_llm})")
+        print(f"[REDIS_CACHE] hit exacto ({motor_vectores}:{motor_llm})")
         return data["respuesta"]
 
     if embedding is not None:
         pattern   = _pattern_key(motor_vectores, motor_llm)
-        min_score = 1.0 - UMBRAL_SIMILITUD_CACHE   # 0.88
+        min_score = 1.0 - UMBRAL_SIMILITUD_CACHE
         best_score     = 0.0
         best_respuesta = None
         scanned        = 0
@@ -139,7 +138,7 @@ def _buscar_en_redis(
         for k in _iterar_claves_redis(r, pattern):
             if scanned >= MAX_SCAN_SEMANTICO:
                 print(
-                    f"[REDIS_CACHE] ⚠️ Scan semántico limitado a {MAX_SCAN_SEMANTICO} claves"
+                    f"[REDIS_CACHE] Scan semántico limitado a {MAX_SCAN_SEMANTICO} claves"
                 )
                 break
             scanned += 1
@@ -153,18 +152,13 @@ def _buscar_en_redis(
                 if score >= min_score and score > best_score:
                     best_score     = score
                     best_respuesta = cached["respuesta"]
-                    # Early exit: si el score es muy alto, no hay que seguir buscando
                     if best_score >= 0.97:
                         break
             except (json.JSONDecodeError, TypeError):
                 continue
 
         if best_respuesta:
-            print(
-                f"[REDIS_CACHE] ✅ Hit semántico "
-                f"(score={best_score:.3f}, umbral_sim={1.0 - UMBRAL_SIMILITUD_CACHE:.2f}, "
-                f"modo={motor_vectores}:{motor_llm}, scanned={scanned})"
-            )
+            print(f"[REDIS_CACHE] hit semántico score={best_score:.3f} ({motor_vectores}:{motor_llm})")
             return best_respuesta
 
     return None
@@ -180,7 +174,6 @@ def _guardar_en_redis(
     ttl: int = TTL_DEFAULT,
 ) -> None:
     if not _es_respuesta_cacheable(respuesta):
-        print("[REDIS_CACHE] ⚠️ Respuesta no cacheada (inválida, truncada o rechazo).")
         return
 
     r             = _get_redis()
@@ -201,7 +194,7 @@ def _guardar_en_redis(
 
     r.hset(key, mapping=entry)
     r.expire(key, ttl)
-    print(f"[REDIS_CACHE] 💾 Respuesta guardada (modo={motor_vectores}:{motor_llm}, TTL={ttl}s)")
+    print(f"[REDIS_CACHE] respuesta guardada ({motor_vectores}:{motor_llm})")
 
 
 def _limpiar_redis(
@@ -237,7 +230,7 @@ def _limpiar_redis(
         if batch:
             deleted += r.delete(*batch)
         resultados.append(f"caché {mv}:{ml} limpiado ({deleted})")
-        print(f"[REDIS_CACHE] 🗑️ Caché {mv}:{ml} limpiado ({deleted} entradas).")
+        print(f"[REDIS_CACHE] {mv}:{ml} limpiado ({deleted} entradas)")
 
     return {"mensaje": " | ".join(resultados)}
 
@@ -264,7 +257,7 @@ def _limpiar_redis_por_documento(
                 deleted += 1
         if deleted:
             resultados.append(f"{mv}:{ml} limpiado ({deleted} entradas)")
-            print(f"[REDIS_CACHE] 🗑️ '{nombre_coleccion}' eliminado de {mv}:{ml} ({deleted} entradas).")
+            print(f"[REDIS_CACHE] '{nombre_coleccion}' eliminado de {mv}:{ml} ({deleted} entradas)")
         else:
             resultados.append(f"{mv}:{ml} sin entradas del documento")
 

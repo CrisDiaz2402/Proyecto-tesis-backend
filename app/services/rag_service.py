@@ -1,4 +1,3 @@
-# app/services/rag_service.py
 import os
 import re
 import json
@@ -24,8 +23,12 @@ from app.core.prompts import SYSTEM_PROMPT_FIJO, USER_TEMPLATE
 from app.core.prompts import PROMPT_ERROR_FALLBACK
 from app.core.exceptions import LLMError
 from app.core.singletons import EmbedModelSingleton, HttpxClientSingleton
+from app.core.defaults import (
+    FRASES_NORMALIZACION_VACIA as _FRASES_VACIO,
+    MARCADORES_IDIOMA_INCORRECTO as _MARCADORES_NO_ESPANOL,
+    DEFAULTS_NLU as _DEFAULTS_NLU,
+)
 
-# Fallback si la BD no tiene prompt guardado aún
 _PROMPT_PRINCIPAL_DEFAULT = SYSTEM_PROMPT_FIJO + "\n\n" + USER_TEMPLATE + "\nRespuesta:"
 
 from app.services.qdrant_service import (
@@ -49,11 +52,6 @@ MAX_CHARS_CONTEXTO      = 2200
 
 _LLM_SEMAPHORE  = asyncio.Semaphore(3)
 _EMBED_SEMAPHORE = asyncio.Semaphore(6)
-
-
-def _generar_embedding(texto: str, motor: str) -> list[float]:
-    proveedor = crear_proveedor_llm(motor)
-    return proveedor.generar_embedding(texto)
 
 
 async def _generar_embedding_async(texto: str, motor_vectores: str) -> list[float]:
@@ -121,17 +119,6 @@ def _split_text(texto: str, chunk_size: int, chunk_overlap: int) -> list[str]:
     return [c.strip() for c in raw_chunks if c.strip()]
 
 
-_FRASES_VACIO = [
-    "lo siento",
-    "no existe en mi base",
-    "no tengo esa información",
-    "no poseo información",
-    "no cuento con esa",
-    "esa información no existe",
-    "no hay información",
-    "no se encontró información",
-    "no dispongo de",
-]
 _MENSAJE_CANONICO_VACIO = (
     "No encontré información sobre eso en los documentos académicos disponibles."
 )
@@ -146,15 +133,9 @@ def _normalizar_respuesta_vacia(respuesta: str) -> str:
     if _FRASE_CANONICA_BASE in r_lower:
         return respuesta
     if any(frase in r_lower for frase in _FRASES_VACIO):
-        print("[RAG] 🔄 Respuesta normalizada a frase canónica de vacío.")
+        print("[RAG] respuesta normalizada a frase canónica")
         return _MENSAJE_CANONICO_VACIO
     return respuesta
-
-
-_MARCADORES_NO_ESPANOL = [
-    "você", "voce", "matérias", "seguintes", "tem como",
-    "são ", "está ", "precisa ", "todas as ", "pode ",
-]
 
 
 def _detectar_idioma_incorrecto(respuesta: str) -> bool:
@@ -162,15 +143,7 @@ def _detectar_idioma_incorrecto(respuesta: str) -> bool:
     return any(marcador in r_lower for marcador in _MARCADORES_NO_ESPANOL)
 
 
-PALABRAS_LISTA_LARGA = [
-    "todas las materias", "todos los niveles", "lista completa",
-    "enumera todas", "todos los semestres",
-    "qué materias hay en", "materias del nivel", "cuáles son todas",
-    "prerrequisitos transitivos", "debería haber aprobado antes",
-    "sin ningún prerrequisito", "no tienen prerrequisito",
-    "qué necesito para graduarme", "requisitos para graduarme",
-    "qué requisitos", "cuáles son los requisitos",
-]
+PALABRAS_LISTA_LARGA = _DEFAULTS_NLU["palabras_lista_larga"]
 
 
 def _es_pregunta_de_lista_larga(pregunta: str) -> bool:
@@ -205,8 +178,6 @@ def _get_num_tokens(motor_llm: str) -> int:
 
 
 def _get_retrieval_params(motor_vectores: str) -> tuple[int, float]:
-    # BUG #3 CORREGIDO: get_params() ahora usa caché en memoria (ver
-    # rag_params_service.py). Esta llamada ya no abre SessionLocal cada vez.
     params = get_params()
     return (
         params.get("rag_k_local", 10),
@@ -238,7 +209,7 @@ def procesar_y_guardar_documento(filepath: str, motor: str = "local") -> dict:
     chunk_size = CHUNK_SIZE_LOCAL
     fragmentos = _split_text(contenido, chunk_size, CHUNK_OVERLAP)
 
-    print(f"[RAG] 📄 Text splitting ({chunk_size} chars + {CHUNK_OVERLAP} overlap): {len(fragmentos)} fragmentos generados.")
+    print(f"[RAG] {len(fragmentos)} fragmentos generados ({chunk_size} chars, overlap {CHUNK_OVERLAP})")
 
     embedder   = proveedor
     embeddings = [embedder.generar_embedding(fragmento) for fragmento in fragmentos]
@@ -252,7 +223,7 @@ def procesar_y_guardar_documento(filepath: str, motor: str = "local") -> dict:
     ]
 
     insertar_puntos(motor_vectores, embeddings, payloads)
-    print(f"[RAG] ✅ {len(fragmentos)} chunks guardados en Qdrant ({motor_vectores})")
+    print(f"[RAG] {len(fragmentos)} chunks guardados en Qdrant ({motor_vectores})")
 
     return {
         "mensaje":   f"Procesado en {motor_vectores}: {len(fragmentos)} fragmentos.",
@@ -321,10 +292,7 @@ class PipelineRAGBuilder:
             primer_chunk["contenido"] = self._chunks[0]["contenido"][:MAX_CHARS_CONTEXTO]
             chunks_seleccionados = [primer_chunk]
 
-        print(
-            f"[RAG] 📦 Chunks usados: {len(chunks_seleccionados)}/{len(self._chunks)} "
-            f"({chars_acumulados} chars de contexto)"
-        )
+        print(f"[RAG] chunks usados: {len(chunks_seleccionados)}/{len(self._chunks)} ({chars_acumulados} chars)")
 
         contexto  = "\n\n---\n\n".join([c["contenido"] for c in chunks_seleccionados])
         prompt_ia = self._prompt_template.format(contexto=contexto, pregunta=self._pregunta)
@@ -358,7 +326,7 @@ def _reescribir_query_para_retrieval(pregunta: str) -> str:
         m = re.search(patron, pregunta, re.IGNORECASE)
         if m:
             afirmacion = m.group(1).strip()
-            print(f"[RAG] 🔍 Query reescrita para retrieval: '{afirmacion}'")
+            print(f"[RAG] query reescrita: '{afirmacion}'")
             return afirmacion
     return pregunta
 
@@ -390,7 +358,6 @@ async def _consultar_rag_puro(
     resultados = _buscar_chunks_similares(query_embedding, motor_vectores, k_retrieval, umbral)
 
     if not resultados:
-        # BUG #4: usa la versión cacheada
         from app.services.nlu_config_service import get_nlu_config_cached
         return (
             get_nlu_config_cached().get(
@@ -420,12 +387,12 @@ async def _consultar_rag_puro(
             pipeline["num_tokens"],
         )
     except LLMError as e:
-        print(f"[RAG] ❌ LLM falló: {e}")
+        print(f"[RAG] LLM falló: {e}")
         return PROMPT_ERROR_FALLBACK, "error"
 
     respuesta = _normalizar_respuesta_vacia(respuesta)
     if _detectar_idioma_incorrecto(respuesta):
-        print("[RAG] ⚠️ Respuesta en idioma incorrecto detectada, usando fallback.")
+        print("[RAG] idioma incorrecto, usando fallback")
         respuesta = _MENSAJE_CANONICO_VACIO
 
     documento_origen = resultados[0]["coleccion"]
@@ -439,7 +406,7 @@ async def consultar_base_conocimiento(pregunta: str, motor: str = "local") -> st
     try:
         embedding = await _generar_embedding_async(pregunta, motor_vectores)
     except Exception as e:
-        print(f"[RAG] ⚠️ No se pudo generar embedding: {e}. Continuando sin búsqueda semántica en caché.")
+        print(f"[RAG] embedding fallido, sin búsqueda en caché: {e}")
         embedding = None
 
     from app.services.cache_service import buscar_en_cache, guardar_en_cache
@@ -451,7 +418,7 @@ async def consultar_base_conocimiento(pregunta: str, motor: str = "local") -> st
         embedding=embedding,
     )
     if cached:
-        print(f"[CACHE] ⚡ Hit ({motor_vectores}:{motor_llm})")
+        print(f"[CACHE] hit ({motor_vectores}:{motor_llm})")
         return cached
 
     t0 = time.time()
@@ -460,7 +427,7 @@ async def consultar_base_conocimiento(pregunta: str, motor: str = "local") -> st
         motor,
         embedding_precalculado=embedding,
     )
-    print(f"[RAG] ✅ Consulta completada en {round(time.time() - t0, 2)}s")
+    print(f"[RAG] Consulta completada en {round(time.time() - t0, 2)}s")
 
     guardar_en_cache(
         pregunta,

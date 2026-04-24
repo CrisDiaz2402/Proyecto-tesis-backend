@@ -1,49 +1,43 @@
-import json
+# app/services/config_service.py
 import time
-from pathlib import Path
-
 from app.core.event_bus import event_bus
 from app.core.constants import COMBINACIONES_VALIDAS, MOTORES_VECTORES_VALIDOS, MOTORES_LLM_VALIDOS
-
-CONFIG_FILE = Path("./config_ia.json")
 
 _CONFIG_TTL = 10.0
 _config_cache: dict = {"data": None, "ts": 0.0}
 
 
-def _crear_config_si_no_existe():
-    if not CONFIG_FILE.exists():
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump({"motor_vectores": "local", "motor_llm": "local"}, f)
-
-
-def _migrar_config_si_es_vieja(data: dict) -> dict:
-    if "motor_activo" in data and "motor_vectores" not in data:
-        motor = data.get("motor_activo", "local")
-        return {"motor_vectores": motor, "motor_llm": motor}
-    return data
-
-
 def _invalidar_cache() -> None:
-    """Fuerza lectura desde disco en la próxima llamada."""
     _config_cache["ts"] = 0.0
+
+
+def _get_or_create_motor(db):
+    from app.db import models
+    config = db.query(models.ConfiguracionMotor).filter_by(id=1).first()
+    if config is None:
+        config = models.ConfiguracionMotor(id=1, motor_vectores="local", motor_llm="local")
+        db.add(config)
+        db.commit()
+        db.refresh(config)
+    return config
 
 
 def obtener_configuracion() -> dict:
     if _config_cache["data"] is not None and (time.time() - _config_cache["ts"]) < _CONFIG_TTL:
         return _config_cache["data"]
 
-    _crear_config_si_no_existe()
+    from app.db.database import SessionLocal
+    db = SessionLocal()
     try:
-        with open(CONFIG_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            data = _migrar_config_si_es_vieja(data)
-            result = {
-                "motor_vectores": data.get("motor_vectores", "local"),
-                "motor_llm":      data.get("motor_llm",      "local"),
-            }
+        config = _get_or_create_motor(db)
+        result = {
+            "motor_vectores": config.motor_vectores,
+            "motor_llm": config.motor_llm,
+        }
     except Exception:
         result = {"motor_vectores": "local", "motor_llm": "local"}
+    finally:
+        db.close()
 
     _config_cache["data"] = result
     _config_cache["ts"] = time.time()
@@ -66,11 +60,14 @@ def cambiar_configuracion(motor_vectores: str, motor_llm: str) -> bool:
             "Combinaciones válidas: local:local, local:cloud."
         )
 
-    _crear_config_si_no_existe()
+    from app.db.database import SessionLocal
+    db = SessionLocal()
     try:
-        with open(CONFIG_FILE, "w", encoding="utf-8") as f:
-            json.dump({"motor_vectores": motor_vectores, "motor_llm": motor_llm}, f, indent=2)
-        print(f"[CONFIG] ✅ Motor cambiado a {motor_vectores}:{motor_llm}")
+        config = _get_or_create_motor(db)
+        config.motor_vectores = motor_vectores
+        config.motor_llm = motor_llm
+        db.commit()
+        print(f"[CONFIG] Motor cambiado a {motor_vectores}:{motor_llm}")
 
         _invalidar_cache()
 
@@ -81,7 +78,10 @@ def cambiar_configuracion(motor_vectores: str, motor_llm: str) -> bool:
         return True
     except Exception as e:
         print(f"[CONFIG] Error al guardar configuración: {e}")
+        db.rollback()
         return False
+    finally:
+        db.close()
 
 
 def cambiar_motor_activo(nuevo_motor: str) -> bool:

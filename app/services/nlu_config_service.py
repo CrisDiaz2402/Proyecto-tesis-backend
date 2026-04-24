@@ -8,22 +8,20 @@ from sqlalchemy.orm import Session
 
 from app.db.database import SessionLocal
 from app.db import models
-from app.db.models import DEFAULTS_NLU
+from app.core.defaults import DEFAULTS_NLU
 
 _CAMPOS_NLU = list(DEFAULTS_NLU.keys())
 
-_NLU_CACHE_TTL = 60.0  # segundos
+_NLU_CACHE_TTL = 60.0
 
 _nlu_cache: dict[str, Any] = {"data": None, "ts": 0.0}
 
 
 def _invalidar_cache_nlu() -> None:
-    """Fuerza lectura desde BD en la próxima llamada a get_nlu_config_cached."""
     _nlu_cache["ts"] = 0.0
 
 
 def get_nlu_config_cached() -> dict[str, Any]:
-    """Versión cacheada (sin SessionLocal por request).  Usar en el path caliente."""
     now = time.time()
     if _nlu_cache["data"] is not None and (now - _nlu_cache["ts"]) < _NLU_CACHE_TTL:
         return _nlu_cache["data"]

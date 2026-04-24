@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.db import models
 from app.db.deps import get_db
-from app.db.models import DEFAULTS_NLU
+from app.core.defaults import DEFAULTS_NLU
 from app.core.security import get_current_user
 from app.schemas.schemas import NLUConfigOut, NLUConfigUpdate
 from app.services import nlu_config_service

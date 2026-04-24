@@ -2,6 +2,7 @@ import uuid
 from sqlalchemy import Column, Integer, String, DateTime, Float, Boolean, Text, JSON
 from sqlalchemy.sql import func
 from app.db.database import Base
+from app.core.defaults import DEFAULTS_NLU
 
 class Usuario(Base):
     __tablename__ = "usuarios"
@@ -40,48 +41,6 @@ class ConfiguracionRAG(Base):
     )
 
 
-DEFAULTS_NLU = {
-    "palabras_saludo": [
-        "hola", "buenos días", "buenas tardes", "buenas noches",
-        "buen día", "buenas", "hey", "saludos", "hi", "hello",
-    ],
-    "frases_despedida": [
-        "adiós", "adios", "hasta luego", "chao", "chau",
-        "nos vemos", "hasta pronto", "bye",
-    ],
-    "frases_agradecimiento": [
-        "gracias", "muchas gracias", "te agradezco", "gracias por tu ayuda",
-        "muy amable", "perfecto gracias",
-    ],
-    "palabras_lista_larga": [
-        "todas las materias", "todos los niveles", "lista completa",
-        "enumera todas", "todos los semestres",
-        "qué materias hay en", "materias del nivel", "cuáles son todas",
-        "prerrequisitos transitivos", "debería haber aprobado antes",
-        "sin ningún prerrequisito", "no tienen prerrequisito",
-        "qué necesito para graduarme", "requisitos para graduarme",
-        "qué requisitos", "cuáles son los requisitos",
-    ],
-    "frases_rechazo": [
-        "no encontré información",
-        "no está disponible",
-        "lo siento",
-        "no tengo informacion",
-        "no hay informacion",
-        "no se encuentra",
-        "no consta",
-        "no puedo",
-        "no dispongo",
-        "no cuento con esa información",
-    ],
-    "mensaje_saludo": "¡Hola! Soy el Asistente Académico de la EPN. ¿En qué puedo ayudarte hoy?",
-    "mensaje_despedida": "¡Hasta luego! Si tienes más consultas académicas, aquí estaré.",
-    "mensaje_agradecimiento": "Con gusto. ¿Hay algo más en lo que pueda ayudarte?",
-    "mensaje_fuera_de_tema": "Solo puedo ayudarte con consultas académicas de la EPN. ¿Tienes alguna pregunta sobre materias, créditos o requisitos de graduación?",
-    "mensaje_sin_resultados": "No encontré información sobre eso en los documentos académicos disponibles. Intenta reformular tu pregunta.",
-}
-
-
 class ConfiguracionNLU(Base):
     __tablename__ = "configuracion_nlu"
 
@@ -96,6 +55,19 @@ class ConfiguracionNLU(Base):
     mensaje_agradecimiento = Column(Text, default=DEFAULTS_NLU["mensaje_agradecimiento"])
     mensaje_fuera_de_tema = Column(Text, default=DEFAULTS_NLU["mensaje_fuera_de_tema"])
     mensaje_sin_resultados = Column(Text, default=DEFAULTS_NLU["mensaje_sin_resultados"])
+    fecha_actualizacion = Column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
+
+
+class ConfiguracionMotor(Base):
+    __tablename__ = "configuracion_motor"
+
+    id = Column(Integer, primary_key=True, default=1)
+    motor_vectores = Column(String, default="local", nullable=False)
+    motor_llm = Column(String, default="local", nullable=False)
     fecha_actualizacion = Column(
         DateTime(timezone=True),
         server_default=func.now(),

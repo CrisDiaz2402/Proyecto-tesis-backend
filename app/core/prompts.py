@@ -1,5 +1,3 @@
-# app/core/prompts.py
-
 SYSTEM_PROMPT_FIJO = """Eres el Asistente Académico de la EPN. Responde SIEMPRE en español.
 
 REGLAS (sin excepción):
@@ -14,7 +12,5 @@ USER_TEMPLATE = """CONTEXTO:
 {contexto}
 
 Pregunta: {pregunta}"""
-
-PROMPT_SYSTEM_STREAMING = """Eres el Asistente Académico de la EPN. Responde en español."""
 
 PROMPT_ERROR_FALLBACK = """Ha ocurrido un error técnico. Por favor reformula tu pregunta o contacta al administrador."""

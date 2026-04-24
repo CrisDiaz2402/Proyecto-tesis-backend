@@ -8,10 +8,7 @@ from app.core.config import (
     DOCUMENTS_DIR_LOCAL, MAX_DOCUMENTOS, 
     LIMITE_TAMANO_MB, LIMITE_TAMANO_BYTES, EXTENSIONES_PERMITIDAS
 )
-from app.core.exceptions import (
-    DocumentoError, LimiteDocumentosError, ExtensionNoPermitidaError, 
-    TamanoExcedidoError, MotorInvalidoError
-)
+from app.core.exceptions import DocumentoError
 from app.db import models
 from app.repositories.documento_repository import DocumentoRepository
 from app.services.rag_service import procesar_y_guardar_documento
@@ -126,7 +123,7 @@ class DocumentoService:
                 content = await file.read()
                 buffer.write(content)
             
-            print(f"[DOCS] 💾 Archivo físico guardado: {ruta}")
+            print(f"[DOCS] archivo guardado: {ruta}")
         
         except Exception as e:
             raise DocumentoError(f"Error al guardar archivo físico: {str(e)}")

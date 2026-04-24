@@ -7,8 +7,8 @@ from app.core.config import DATABASE_URL
 
 engine = create_engine(
     DATABASE_URL,
-    pool_size=10,
-    max_overflow=20,
+    pool_size=3,      
+    max_overflow=5,   
     pool_timeout=30,
     pool_pre_ping=True,
 )

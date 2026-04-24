@@ -34,4 +34,6 @@ class EmbedModelSingleton(metaclass=_SingletonMeta):
 class HttpxClientSingleton(metaclass=_SingletonMeta):
     def __init__(self):
         import httpx
-        self.client = httpx.AsyncClient(timeout=120.0)
+        self.client = httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=5.0, read=120.0, write=10.0, pool=5.0)
+        )

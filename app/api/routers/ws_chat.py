@@ -11,7 +11,7 @@ from fastapi.websockets import WebSocketState
 
 from app.core.security import validate_token_ws
 from app.core.constants import TIPOS_WEBSOCKET
-from app.core.exceptions import AuthError, RAGError
+from app.core.exceptions import RAGError
 from app.db.database import SessionLocal
 from app.services.rag_service import consultar_base_conocimiento, pipeline_streaming, generar_respuesta_stream_local
 from app.services.config_service import obtener_motor_activo
@@ -22,7 +22,27 @@ from app.core.event_bus import event_bus
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
 def _on_motor_cambiado(data: dict):
-    print(f"[WS] Observer: motor cambiado a {data}")
+    motor_str = f"{data.get('motor_vectores', '?')}:{data.get('motor_llm', '?')}"
+    mensaje = {
+        "tipo": "info",
+        "mensaje": f"El motor del sistema ha sido actualizado a: {motor_str}",
+        "motor": motor_str,
+    }
+    import asyncio
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(_broadcast_a_todos(mensaje))
+    except Exception as e:
+        print(f"[WS Observer] No se pudo enviar notificación: {e}")
+
+
+async def _broadcast_a_todos(mensaje: dict):
+    for client_id in list(manager._conexiones.keys()):
+        try:
+            await manager.send_to_user(client_id, mensaje)
+        except Exception:
+            pass
 
 event_bus.suscribir("motor_cambiado", _on_motor_cambiado)
 
@@ -345,23 +365,18 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
 
         if motor_llm == "local":
             from app.services.rag_service import (
-                _generar_embedding, _buscar_chunks_similares,
+                _generar_embedding_async, _buscar_chunks_similares,
                 _get_retrieval_params, _get_num_tokens,
-                _get_system_prompt_from_db,   
-                _EMBED_SEMAPHORE,
+                _get_system_prompt_from_db,
             )
             from app.services.rag_params_service import get_params
             from app.core.prompts import USER_TEMPLATE
             from app.services.cache_service import buscar_en_cache, guardar_en_cache
 
-            loop = asyncio.get_event_loop()
             try:
-                async with _EMBED_SEMAPHORE:
-                    query_embedding = await loop.run_in_executor(
-                        None, lambda: _generar_embedding(pregunta, motor_vectores)
-                    )
+                query_embedding = await _generar_embedding_async(pregunta, motor_vectores)
             except Exception as e:
-                print(f"[WS RAG] ⚠️ No se pudo generar embedding: {e}")
+                print(f"[WS RAG]  No se pudo generar embedding: {e}")
                 query_embedding = None
 
             cached = buscar_en_cache(
@@ -412,7 +427,6 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
                     user_content = USER_TEMPLATE.format(contexto=contexto, pregunta=pregunta)
                     num_tokens = _get_num_tokens(motor_llm)
 
-                    # ✅ CORREGIDO: system prompt viene de BD, no hardcodeado
                     system_prompt = _get_system_prompt_from_db()
 
                     await manager.send_to_user(client_id, {

@@ -26,26 +26,8 @@ def crear_coleccion(motor: str) -> None:
             collection_name=nombre,
             vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
         )
-        print(f"[QDRANT] ✅ Colección '{nombre}' creada ({dim} dims)")
-    else:
-        print(f"[QDRANT] Colección '{nombre}' ya existe.")
+        print(f"[QDRANT] Colección '{nombre}' creada ({dim} dims)")
 
-
-def eliminar_coleccion_qdrant(motor: str) -> dict:
-    client = QdrantClientSingleton().client
-    nombre = QDRANT_COLLECTION_LOCAL
-    try:
-        client.delete_collection(collection_name=nombre)
-        print(f"[QDRANT] 🗑️ Colección '{nombre}' eliminada.")
-        return {"mensaje": f"Colección '{nombre}' eliminada."}
-    except Exception as e:
-        print(f"[QDRANT] Error al eliminar colección '{nombre}': {e}")
-        return {"mensaje": str(e)}
-
-
-def listar_colecciones() -> list[str]:
-    client = QdrantClientSingleton().client
-    return [c.name for c in client.get_collections().collections]
 
 def insertar_puntos(
     motor: str,
@@ -70,7 +52,7 @@ def insertar_puntos(
     ]
 
     client.upsert(collection_name=nombre, points=points)
-    print(f"[QDRANT] ✅ {len(points)} puntos insertados en '{nombre}'")
+    print(f"[QDRANT] {len(points)} puntos insertados en '{nombre}'")
     return len(points)
 
 def eliminar_puntos_por_documento(nombre_documento: str, motor: str) -> dict:
@@ -90,7 +72,7 @@ def eliminar_puntos_por_documento(nombre_documento: str, motor: str) -> dict:
                 ]
             ),
         )
-        print(f"[QDRANT] 🗑️ Puntos de '{nombre_documento}' eliminados de '{nombre}'")
+        print(f"[QDRANT] Puntos de '{nombre_documento}' eliminados de '{nombre}'")
         return {"mensaje": f"Documento '{nombre_documento}' eliminado de '{nombre}'."}
     except Exception as e:
         print(f"[QDRANT] Error al eliminar puntos de '{nombre_documento}': {e}")
@@ -110,7 +92,7 @@ def eliminar_todos_los_puntos(motor: str) -> dict:
             collection_name=nombre,
             vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
         )
-        print(f"[QDRANT] 🗑️ Todos los puntos eliminados de '{nombre}' (recreada).")
+        print(f"[QDRANT] colección '{nombre}' recreada")
         return {"mensaje": f"Todos los vectores de '{nombre}' eliminados."}
     except Exception as e:
         print(f"[QDRANT] Error al vaciar '{nombre}': {e}")
