@@ -25,7 +25,7 @@ def _on_motor_cambiado(data: dict):
     motor_str = f"{data.get('motor_vectores', '?')}:{data.get('motor_llm', '?')}"
     mensaje = {
         "tipo": "info",
-        "mensaje": f"El motor del sistema ha sido actualizado a: {motor_str}",
+        "mensaje": "La configuración del asistente ha sido actualizada por un administrador.",
         "motor": motor_str,
     }
     import asyncio
@@ -237,7 +237,7 @@ async def chat_websocket(
     try:
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["estado"],
-            "mensaje": f"Conectado al Avatar RAG EPN (motor: {obtener_motor_activo()}). Realiza tu consulta académica.",
+            "mensaje": "Conectado. ¿En qué puedo ayudarte hoy?",
             "timestamp": time.time(),
         })
 
@@ -261,7 +261,7 @@ async def chat_websocket(
         try:
             await manager.send_to_user(client_id, {
                 "tipo": TIPOS_WEBSOCKET["error"],
-                "mensaje": "Error interno del servidor",
+                "mensaje": "Ocurrió un error inesperado. Por favor recarga la página.",
             })
         except Exception:
             pass
@@ -343,7 +343,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         })
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["final"],
-            "mensaje": "Consulta completada.",
+            "mensaje": "",
         })
         return
 
@@ -355,7 +355,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
     try:
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["estado"],
-            "mensaje": "Buscando en base de conocimiento...",
+            "mensaje": "Buscando información...",
         })
 
         motor_vectores, motor_llm = (
@@ -431,7 +431,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
 
                     await manager.send_to_user(client_id, {
                         "tipo": TIPOS_WEBSOCKET["estado"],
-                        "mensaje": f"Generando respuesta (motor: {motor_actual})...",
+                        "mensaje": "Generando respuesta...",
                     })
 
                     respuesta_completa = ""
@@ -466,7 +466,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         else:
             await manager.send_to_user(client_id, {
                 "tipo": TIPOS_WEBSOCKET["estado"],
-                "mensaje": f"Generando respuesta (motor: {motor_actual})...",
+                "mensaje": "Generando respuesta...",
             })
 
             respuesta = await consultar_base_conocimiento(pregunta, motor=motor_actual)
@@ -483,7 +483,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
 
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["final"],
-            "mensaje": "Consulta completada.",
+            "mensaje": "",
         })
 
     except RAGError as e:
@@ -491,7 +491,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         manager.finalizar_consulta(query_id, latencia, cache=False)
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["error"],
-            "mensaje": f"Error RAG: {e.message}",
+            "mensaje": "Ocurrió un problema al procesar tu consulta. Por favor intenta de nuevo.",
             "details": e.details,
         })
 
@@ -501,5 +501,5 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         print(f"[WS RAG ERROR] {client_id}: {e}")
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["error"],
-            "mensaje": "Error procesando consulta. Inténtalo nuevamente.",
+            "mensaje": "No pude procesar tu consulta en este momento. Por favor intenta de nuevo.",
         })

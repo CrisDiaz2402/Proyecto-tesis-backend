@@ -229,7 +229,7 @@ def _limpiar_redis(
                 batch    = []
         if batch:
             deleted += r.delete(*batch)
-        resultados.append(f"caché {mv}:{ml} limpiado ({deleted})")
+        resultados.append(f"Memoria semántica limpiada ({deleted} entradas)")
         print(f"[REDIS_CACHE] {mv}:{ml} limpiado ({deleted} entradas)")
 
     return {"mensaje": " | ".join(resultados)}
@@ -261,7 +261,7 @@ def _limpiar_redis_por_documento(
         else:
             resultados.append(f"{mv}:{ml} sin entradas del documento")
 
-    return {"mensaje": f"Caché del documento '{nombre_coleccion}' procesado: {' | '.join(resultados)}"}
+    return {"mensaje": f"Memoria asociada al documento '{nombre_coleccion}' eliminada correctamente."}
 
 def buscar_en_cache(
     pregunta: str,

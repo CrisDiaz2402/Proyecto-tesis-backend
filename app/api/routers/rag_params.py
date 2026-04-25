@@ -5,7 +5,15 @@ from typing import Optional
 from app.db import models
 from app.db.deps import get_db
 from app.core.security import get_current_user
-from app.core.prompts import SYSTEM_PROMPT_FIJO, USER_TEMPLATE
+from app.core.prompts import (
+    SYSTEM_PROMPT_EDITABLE,
+    USER_TEMPLATE,
+    PROMPT_SUFFIX_FIJO,
+    PROMPT_SUFFIX_FIJO_CHARS,
+    MIN_CHARS_SYSTEM_PROMPT,
+    MAX_CHARS_SYSTEM_PROMPT_EDITABLE,
+    MAX_TOKENS_MODELO,
+)
 from app.services import rag_params_service
 from app.services.rag_params_service import (
     DEFAULTS,
@@ -58,8 +66,15 @@ def get_rag_params(
             "limites":               PARAM_LIMITS,
             "fecha_actualizacion":   config.fecha_actualizacion,
             "prompts_default_texto": {
-                "prompt_principal": USER_TEMPLATE + "\nRespuesta:",
-                "system_prompt":    SYSTEM_PROMPT_FIJO,
+                "prompt_principal": SYSTEM_PROMPT_EDITABLE,
+                "system_prompt":    SYSTEM_PROMPT_EDITABLE,
+            },
+            "prompt_limites": {
+                "min_chars":         MIN_CHARS_SYSTEM_PROMPT,
+                "max_chars":         MAX_CHARS_SYSTEM_PROMPT_EDITABLE,
+                "suffix_fijo":       PROMPT_SUFFIX_FIJO,
+                "suffix_fijo_chars": PROMPT_SUFFIX_FIJO_CHARS,
+                "max_tokens_modelo": MAX_TOKENS_MODELO,
             },
         }
     except Exception as e:
@@ -75,7 +90,7 @@ def update_rag_params(
     db: Session = Depends(get_db),
     _: models.Usuario = Depends(get_current_user),
 ):
-    new_data = {k: v for k, v in request.dict().items() if v is not None}
+    new_data = request.model_dump(exclude_unset=True)
 
     if not new_data:
         raise HTTPException(
@@ -87,7 +102,7 @@ def update_rag_params(
     if errores:
         raise HTTPException(
             status_code=422,
-            detail={"mensaje": "Parámetros fuera de rango.", "errores": errores},
+            detail={"mensaje": "Uno o más valores están fuera del rango permitido.", "errores": errores},
         )
 
     try:
@@ -95,7 +110,7 @@ def update_rag_params(
     except Exception as e:
         raise HTTPException(
             status_code=500,
-            detail=f"Error al guardar parámetros en base de datos: {str(e)}",
+            detail="No se pudieron guardar los cambios. Intenta nuevamente.",
         )
 
     limpieza = determinar_limpieza(old_params, new_params)
@@ -106,18 +121,16 @@ def update_rag_params(
         raise HTTPException(
             status_code=500,
             detail=(
-                f"Parámetros guardados correctamente, pero ocurrió un error durante "
-                f"la limpieza automática: {str(e)}. "
-                f"Considera limpiar cachés y vectores manualmente desde la sección de Documentos."
+                f"Cambios guardados, pero ocurrió un error en la actualización interna. "
+                f"Ve a Documentos y usa Sincronizar si el asistente no responde correctamente."
             ),
         )
 
     advertencias: list[str] = []
     if limpieza["requiere_reindexar"]:
         advertencias.append(
-            "El parámetro de chunking cambió. Los vectores fueron eliminados automáticamente. "
-            "Debes reprocesar (reindexar) todos los documentos desde la sección de Documentos "
-            "para que el nuevo chunking tenga efecto."
+            "La configuración de búsqueda cambió. Ve a la sección Documentos y usa "
+            "Sincronizar para que los cambios tengan efecto."
         )
 
     params_cambiados = limpieza["params_cambiados"]
@@ -126,8 +139,7 @@ def update_rag_params(
     return {
         "ok":                  True,
         "mensaje":             (
-            f"{len(params_cambiados)} parámetro(s) actualizado(s). "
-            f"{len(acciones)} acción(es) de limpieza ejecutada(s)."
+            f"{len(params_cambiados)} parámetro(s) actualizado(s) correctamente."
         ),
         "params_cambiados":    params_cambiados,
         "params_sin_cambio":   sin_cambio,
@@ -166,13 +178,13 @@ def reset_rag_params(
     advertencias: list[str] = []
     if limpieza["requiere_reindexar"]:
         advertencias.append(
-            "El parámetro de chunking fue modificado antes del reset. "
-            "Los vectores fueron eliminados. Reprocesa los documentos."
+            "La configuración fue restaurada. Ve a Documentos y usa Sincronizar para "
+            "aplicar los cambios."
         )
 
     return {
         "ok":                  True,
-        "mensaje":             "Parámetros restaurados a valores por defecto.",
+        "mensaje":             "Configuración restaurada a los valores originales.",
         "params_reseteados":   limpieza["params_cambiados"],
         "acciones_limpieza":   acciones,
         "advertencias":        advertencias,

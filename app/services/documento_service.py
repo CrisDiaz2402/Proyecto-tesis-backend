@@ -66,7 +66,7 @@ class DocumentoService:
         
         return {
             "documento": documento,
-            "mensaje": f"Documento procesado exitosamente en {MOTOR_LABELS.get(motor, motor)}.",
+            "mensaje": f"Documento '{file.filename}' procesado y añadido a la base de conocimiento.",
             "motor": motor,
         }
     
@@ -87,7 +87,7 @@ class DocumentoService:
         
         nombre = documento.nombre_archivo
         self.repository.delete(documento)
-        mensaje = f"Documento '{nombre}' eliminado completamente."
+        mensaje = f"Documento '{nombre}' eliminado correctamente del sistema."
         
         return {
             "mensaje": mensaje,
@@ -98,15 +98,15 @@ class DocumentoService:
     def _validar_limites_sistema(self):
         total_docs = self.repository.count_total()
         if total_docs >= MAX_DOCUMENTOS:
-            raise HTTPException(status_code=400, detail=f"Límite máximo de {MAX_DOCUMENTOS} documentos alcanzado.")
+            raise HTTPException(status_code=400, detail=f"No se pueden agregar más documentos. El límite máximo es de {MAX_DOCUMENTOS} archivos.")
     
     def _validar_archivo(self, file: UploadFile):
         extension = "." + file.filename.split('.')[-1].lower()
         if extension not in EXTENSIONES_PERMITIDAS:
-            raise HTTPException(status_code=400, detail=f"Extensión '{extension}' no permitida.")
+            raise HTTPException(status_code=400, detail=f"El tipo de archivo '{extension}' no está permitido. Usa PDF, DOCX, TXT o MD.")
         
         if file.size and file.size > LIMITE_TAMANO_BYTES:
-            raise HTTPException(status_code=400, detail=f"El archivo supera el límite de {LIMITE_TAMANO_MB} MB.")
+            raise HTTPException(status_code=400, detail=f"El archivo es demasiado grande. El tamaño máximo permitido es {LIMITE_TAMANO_MB} MB.")
     
     def _validar_motor(self, motor: str):
         if motor != "local":

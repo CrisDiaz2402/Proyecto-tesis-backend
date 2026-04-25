@@ -50,7 +50,7 @@ def update_motor(
             f"{request.motor_vectores} / {request.motor_llm}"
         )
         
-        return {"ok": True, "mensaje": f"Modo activado: {etiqueta}"}
+        return {"ok": True, "mensaje": f"Configuración actualizada: {etiqueta}"}
     
     except CombinacionInvalidaError as e:
         raise HTTPException(status_code=400, detail=e.message)

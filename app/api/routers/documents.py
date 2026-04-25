@@ -79,7 +79,7 @@ def limpiar_solo_cache(
         raise HTTPException(status_code=400, detail="Solo se soporta motor='local'.")
     try:
         resultado = limpiar_cache(motor=motor)
-        return AccionGlobalResponse(ok=True, mensaje=f"Caché [Local (ll + lc)] limpiado. {resultado['mensaje']}")
+        return AccionGlobalResponse(ok=True, mensaje="Memoria semántica limpiada correctamente.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -101,7 +101,7 @@ def limpiar_vectores_y_cache(
 
         return AccionGlobalResponse(
             ok=True,
-            mensaje="Vectores y caché de [Local] eliminados. Estado de documentos actualizado."
+            mensaje="Base de conocimiento reiniciada. Los documentos deben ser procesados nuevamente."
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -117,7 +117,7 @@ def procesar_todos_los_documentos(
         raise HTTPException(status_code=400, detail="Solo se soporta motor='local'.")
     documentos = db.query(models.Documento).all()
     if not documentos:
-        return AccionGlobalResponse(ok=True, mensaje="No hay documentos para procesar.")
+        return AccionGlobalResponse(ok=True, mensaje="No hay documentos en el sistema para sincronizar.")
 
     try:
         limpiar_cache(motor=motor)
@@ -135,7 +135,7 @@ def procesar_todos_los_documentos(
         db.commit()
         return AccionGlobalResponse(
             ok=True,
-            mensaje=f"Sincronización masiva ({motor}) completada: {procesados} documento(s) procesados."
+            mensaje=f"Sincronización completada: {procesados} documento(s) añadidos a la base de conocimiento."
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
@@ -158,7 +158,7 @@ def eliminar_todos_los_documentos(
         limpiar_cache(motor="all")
         eliminar_todos_los_vectores(motor="local")
 
-        return AccionGlobalResponse(ok=True, mensaje="Sistema completamente formateado.")
+        return AccionGlobalResponse(ok=True, mensaje="Sistema reiniciado. Todos los documentos y la memoria han sido eliminados.")
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

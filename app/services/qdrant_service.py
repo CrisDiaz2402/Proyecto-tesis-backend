@@ -73,10 +73,10 @@ def eliminar_puntos_por_documento(nombre_documento: str, motor: str) -> dict:
             ),
         )
         print(f"[QDRANT] Puntos de '{nombre_documento}' eliminados de '{nombre}'")
-        return {"mensaje": f"Documento '{nombre_documento}' eliminado de '{nombre}'."}
+        return {"mensaje": f"Documento '{nombre_documento}' eliminado correctamente."}
     except Exception as e:
         print(f"[QDRANT] Error al eliminar puntos de '{nombre_documento}': {e}")
-        return {"mensaje": str(e)}
+        return {"mensaje": "Ocurrió un error interno al procesar la operación."}
 
 
 def eliminar_todos_los_puntos(motor: str) -> dict:
@@ -93,10 +93,10 @@ def eliminar_todos_los_puntos(motor: str) -> dict:
             vectors_config=VectorParams(size=dim, distance=Distance.COSINE),
         )
         print(f"[QDRANT] colección '{nombre}' recreada")
-        return {"mensaje": f"Todos los vectores de '{nombre}' eliminados."}
+        return {"mensaje": "Base de conocimiento reiniciada correctamente."}
     except Exception as e:
         print(f"[QDRANT] Error al vaciar '{nombre}': {e}")
-        return {"mensaje": str(e)}
+        return {"mensaje": "Ocurrió un error interno al procesar la operación."}
 
 def buscar_similares(
     query_embedding: list[float],

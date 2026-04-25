@@ -1,4 +1,4 @@
-from app.core.prompts import SYSTEM_PROMPT_FIJO, USER_TEMPLATE
+from app.core.prompts import SYSTEM_PROMPT_EDITABLE, USER_TEMPLATE
 
 DEFAULTS_NLU: dict = {
     "palabras_saludo": [
@@ -44,8 +44,8 @@ DEFAULTS_NLU: dict = {
 DEFAULTS_RAG: dict = {
     "umbral_relevancia_local": 0.05,
     "rag_k_local": 10,
-    "prompt_principal": USER_TEMPLATE + "\nRespuesta:",
-    "system_prompt": SYSTEM_PROMPT_FIJO,
+    "prompt_principal": SYSTEM_PROMPT_EDITABLE,
+    "system_prompt": SYSTEM_PROMPT_EDITABLE,
 }
 
 FRASES_NORMALIZACION_VACIA: list[str] = [

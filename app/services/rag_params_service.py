@@ -7,6 +7,11 @@ from sqlalchemy.orm import Session
 from app.db.database import SessionLocal
 from app.db import models
 from app.core.defaults import DEFAULTS_RAG
+from app.core.prompts import (
+    PROMPT_SUFFIX_FIJO,
+    MIN_CHARS_SYSTEM_PROMPT,
+    MAX_CHARS_SYSTEM_PROMPT_EDITABLE,
+)
 
 DEFAULTS = DEFAULTS_RAG
 
@@ -22,6 +27,13 @@ PARAM_LIMITS: dict[str, dict[str, Any]] = {
         "default": 10,
         "label": "K local (fragmentos a recuperar)",
         "descripcion": "Número de fragmentos a recuperar de Qdrant (colección local).",
+    },
+    "prompt_principal": {
+        "min_chars": MIN_CHARS_SYSTEM_PROMPT,
+        "max_chars": MAX_CHARS_SYSTEM_PROMPT_EDITABLE,
+        "type": "text",
+        "label": "Prompt del sistema (parte editable)",
+        "descripcion": "Instrucciones para el LLM. La parte de contexto y pregunta se añade automáticamente.",
     },
 }
 
@@ -81,6 +93,20 @@ def get_params() -> dict[str, Any]:
 def validar_params(data: dict[str, Any]) -> dict[str, str]:
     errores: dict[str, str] = {}
     for campo, valor in data.items():
+        if campo == "prompt_principal":
+            if isinstance(valor, str) and len(valor) > 0:
+                largo = len(valor)
+                if largo < MIN_CHARS_SYSTEM_PROMPT:
+                    errores[campo] = (
+                        f"El prompt es demasiado corto ({largo} caracteres). "
+                        f"Mínimo: {MIN_CHARS_SYSTEM_PROMPT} caracteres."
+                    )
+                elif largo > MAX_CHARS_SYSTEM_PROMPT_EDITABLE:
+                    errores[campo] = (
+                        f"El prompt excede el límite permitido ({largo} caracteres). "
+                        f"Máximo: {MAX_CHARS_SYSTEM_PROMPT_EDITABLE} caracteres."
+                    )
+            continue
         if campo in _CAMPOS_TEXTO:
             continue
         if campo not in PARAM_LIMITS:
@@ -92,6 +118,11 @@ def validar_params(data: dict[str, Any]) -> dict[str, str]:
                 f"[{limites['min']}, {limites['max']}]."
             )
     return errores
+
+
+def construir_prompt_completo(prompt_editable: str) -> str:
+    """Concatena la parte editable con el suffix fijo para formar el prompt completo."""
+    return prompt_editable + PROMPT_SUFFIX_FIJO
 
 
 def actualizar_params(

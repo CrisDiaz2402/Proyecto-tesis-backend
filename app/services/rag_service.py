@@ -18,8 +18,8 @@ from app.core.config import (
     GOOGLE_API_KEY, EMBED_DIMENSION_LOCAL,
     VLLM_BASE_URL,
 )
-from app.services.rag_params_service import get_params
-from app.core.prompts import SYSTEM_PROMPT_FIJO, USER_TEMPLATE
+from app.services.rag_params_service import get_params, construir_prompt_completo
+from app.core.prompts import SYSTEM_PROMPT_EDITABLE, USER_TEMPLATE
 from app.core.prompts import PROMPT_ERROR_FALLBACK
 from app.core.exceptions import LLMError
 from app.core.singletons import EmbedModelSingleton, HttpxClientSingleton
@@ -29,7 +29,7 @@ from app.core.defaults import (
     DEFAULTS_NLU as _DEFAULTS_NLU,
 )
 
-_PROMPT_PRINCIPAL_DEFAULT = SYSTEM_PROMPT_FIJO + "\n\n" + USER_TEMPLATE + "\nRespuesta:"
+_PROMPT_PRINCIPAL_DEFAULT = construir_prompt_completo(SYSTEM_PROMPT_EDITABLE)
 
 from app.services.qdrant_service import (
     insertar_puntos,
@@ -333,12 +333,13 @@ def _reescribir_query_para_retrieval(pregunta: str) -> str:
 
 def _get_system_prompt_from_db() -> str:
     params = get_params()
-    return params.get("system_prompt") or SYSTEM_PROMPT_FIJO
+    return params.get("prompt_principal") or SYSTEM_PROMPT_EDITABLE
 
 
 def _get_prompt_template_from_db() -> str:
     params = get_params()
-    return params.get("prompt_principal") or _PROMPT_PRINCIPAL_DEFAULT
+    prompt_editable = params.get("prompt_principal") or SYSTEM_PROMPT_EDITABLE
+    return construir_prompt_completo(prompt_editable)
 
 
 async def _consultar_rag_puro(
