@@ -1,109 +1,208 @@
-# Backend — Asistente Académico RAG EPN
+# Proyecto-tesis-backend — API RAG EPN
 
-API REST y WebSocket que implementa el pipeline de Recuperación Aumentada por Generación (RAG) para consultas académicas sobre documentos de la Escuela Politécnica Nacional. Soporta dos modos de operación: inferencia completamente local mediante vLLM, e inferencia híbrida con embeddings locales y LLM en la nube (Google Gemini).
-
-La descripción general del sistema, la arquitectura de servicios, los modelos de inteligencia artificial utilizados y los comandos de orquestación completa están documentados en el README del repositorio de despliegue (`tesis-deploy`).
+Backend del sistema de Asistente Académico RAG de la Escuela Politécnica Nacional. Implementa el pipeline RAG completo, autenticación JWT, WebSocket para chat en tiempo real y un panel de administración vía API REST.
 
 ---
 
 ## Tabla de contenidos
 
-1. [Requisitos](#1-requisitos)
-2. [Estructura del proyecto](#2-estructura-del-proyecto)
-3. [Variables de entorno](#3-variables-de-entorno)
-4. [Inicialización automática](#4-inicialización-automática)
-5. [API — Endpoints](#5-api--endpoints)
-6. [WebSocket — Protocolo de mensajes](#6-websocket--protocolo-de-mensajes)
-7. [Caché semántico](#7-caché-semántico)
-8. [Patrones de diseño implementados](#8-patrones-de-diseño-implementados)
-9. [Gestión del contenedor backend](#9-gestión-del-contenedor-backend)
-10. [Verificación del servicio](#10-verificación-del-servicio)
+1. [Descripción general](#1-descripción-general)
+2. [Tecnologías principales](#2-tecnologías-principales)
+3. [Estructura del proyecto](#3-estructura-del-proyecto)
+4. [Modelos de inteligencia artificial](#4-modelos-de-inteligencia-artificial)
+5. [Caché semántico](#5-caché-semántico)
+6. [API REST — endpoints](#6-api-rest--endpoints)
+7. [Variables de entorno](#7-variables-de-entorno)
+8. [Ejecución en desarrollo (sin Docker)](#8-ejecución-en-desarrollo-sin-docker)
+9. [Ejecución con Docker (producción)](#9-ejecución-con-docker-producción)
+10. [Notas de implementación](#10-notas-de-implementación)
 
 ---
 
-## 1. Requisitos
+## 1. Descripción general
 
-El backend está diseñado para correr como contenedor Docker. Los servicios de los que depende (PostgreSQL, Qdrant, Redis, vLLM) son gestionados por el `docker-compose.yml` del repositorio de despliegue.
+El backend expone una API REST y un endpoint WebSocket construidos con FastAPI. Su responsabilidad principal es el pipeline RAG:
 
-Para desarrollo local sin Docker:
-
-- Python 3.11
-- Las dependencias de `requirements.txt`
-- Los servicios de infraestructura accesibles en los puertos del host definidos en `.env`
+1. Recibe documentos (PDF, DOCX, TXT, MD), los fragmenta y genera embeddings con un modelo sentence-transformers.
+2. Almacena los vectores en Qdrant para búsqueda por similitud coseno.
+3. Al recibir una consulta por WebSocket, recupera los fragmentos más relevantes, construye un prompt contextualizado y lo envía al LLM activo.
+4. Antes de invocar al LLM, consulta un caché semántico en Redis. Si hay una respuesta suficientemente similar ya almacenada, la retorna directamente.
+5. El sistema soporta dos modos de operación (local y cloud) que pueden cambiarse en caliente desde el panel de administración sin reiniciar el servicio.
 
 ---
 
-## 2. Estructura del proyecto
+## 2. Tecnologías principales
+
+| Componente | Tecnología |
+|---|---|
+| Framework web | FastAPI 0.136 + Uvicorn |
+| ORM / migraciones | SQLAlchemy 2 + Alembic |
+| Base de datos relacional | PostgreSQL 16 (psycopg2-binary) |
+| Base de datos vectorial | Qdrant (qdrant-client) |
+| Caché semántico | Redis 7 (redis-py) |
+| Embeddings | sentence-transformers (`paraphrase-multilingual-MiniLM-L12-v2`) |
+| LLM local | Qwen2.5-3B-Instruct-AWQ vía vLLM (API compatible OpenAI) |
+| LLM cloud | Google Gemini 2.5 Flash (google-generativeai) |
+| Autenticación | JWT (PyJWT + passlib + bcrypt) |
+| Métricas | Prometheus (prometheus-fastapi-instrumentator) |
+| Extracción de documentos | PyMuPDF + pymupdf4llm + docx2txt |
+| Logging | Loguru |
+
+---
+
+## 3. Estructura del proyecto
 
 ```
 Proyecto-tesis-backend/
 ├── app/
-│   ├── main.py                    # Punto de entrada FastAPI, lifespan, middleware
+│   ├── main.py                  # Punto de entrada FastAPI, lifespan, middlewares
+│   ├── core/
+│   │   ├── config.py            # Variables de entorno (carga .env)
+│   │   ├── security.py          # Hashing de contraseñas, generación y verificación de JWT
+│   │   ├── constants.py         # Constantes globales del sistema
+│   │   ├── prompts.py           # System prompt editable, plantillas de prompt y límites de tokens
+│   │   ├── exceptions.py        # Excepciones personalizadas de dominio
+│   │   ├── defaults.py          # Valores por defecto de parámetros RAG y NLU
+│   │   ├── event_bus.py         # Bus de eventos interno para comunicación entre servicios
+│   │   └── singletons.py        # Instancias únicas de clientes (Qdrant, Redis, embedder)
+│   ├── db/
+│   │   ├── database.py          # Engine y SessionLocal de SQLAlchemy
+│   │   ├── models.py            # Modelos ORM (Usuario, Documento, ConfiguracionMotor, etc.)
+│   │   └── deps.py              # Dependencias FastAPI (get_db, get_current_user)
+│   ├── schemas/
+│   │   └── schemas.py           # Esquemas Pydantic de request/response
+│   ├── services/
+│   │   ├── rag_service.py       # Pipeline RAG principal (recuperación + generación)
+│   │   ├── qdrant_service.py    # Operaciones sobre la base de datos vectorial
+│   │   ├── cache_service.py     # Caché exacto y semántico en Redis
+│   │   ├── documento_service.py # Fragmentación, embedding e indexación de documentos
+│   │   ├── config_service.py    # Lectura y escritura de la configuración del motor activo
+│   │   ├── rag_params_service.py# Gestión de parámetros RAG (top_k, threshold, etc.)
+│   │   ├── nlu_config_service.py# Configuración del módulo NLU (intents, mensajes)
+│   │   ├── intent_service.py    # Clasificación de intents antes del pipeline RAG
+│   │   ├── providers.py         # Abstracción del proveedor LLM activo (local/cloud)
+│   │   └── __init__.py
 │   ├── api/
 │   │   └── routers/
-│   │       ├── auth.py            # Login y emisión de tokens JWT
-│   │       ├── documents.py       # Gestión de documentos (subida, listado, eliminación)
-│   │       ├── usuarios.py        # CRUD de usuarios
-│   │       ├── configuracion.py   # Motor activo (local / cloud)
-│   │       ├── rag_params.py      # Parámetros RAG ajustables (umbral, k, prompts)
-│   │       ├── ws_chat.py         # WebSocket de chat y monitor
-│   │       ├── nlu_config.py      # Configuración NLU (saludos, mensajes, etc.)
-│   │       └── cache_admin.py     # Administración del caché Redis
-│   ├── core/
-│   │   ├── config.py              # Lectura de variables de entorno
-│   │   ├── constants.py           # Motores válidos, combinaciones, etiquetas
-│   │   ├── defaults.py            # Fuente única de valores de seed (NLU, RAG, prompts)
-│   │   ├── event_bus.py           # Implementación del patrón Observer
-│   │   ├── exceptions.py          # Jerarquía de excepciones del dominio
-│   │   ├── prompts.py             # Prompts del sistema y plantillas de usuario
-│   │   ├── security.py            # Hashing bcrypt, JWT, dependencias de autenticación
-│   │   └── singletons.py          # Clientes singleton (Qdrant, Redis, Embed, Httpx)
-│   ├── db/
-│   │   ├── database.py            # Engine SQLAlchemy y SessionLocal
-│   │   ├── deps.py                # Dependencia get_db para inyección en routers
-│   │   └── models.py              # Modelos ORM (Usuario, Documento, ConfiguracionRAG,
-│   │                              #   ConfiguracionNLU, ConfiguracionMotor)
-│   ├── domain/
-│   │   └── documento_state.py     # Patrón State para el ciclo de vida del documento
-│   ├── repositories/
-│   │   └── documento_repository.py # Patrón Repository para acceso a datos de documentos
-│   ├── schemas/
-│   │   └── schemas.py             # Modelos Pydantic de entrada y salida
-│   └── services/
-│       ├── cache_service.py       # Caché semántico en Redis con circuit breaker
-│       ├── config_service.py      # Lectura y escritura del motor activo en BD
-│       ├── documento_service.py   # Lógica de negocio de documentos
-│       ├── intent_service.py      # Clasificación de intención NLU
-│       ├── nlu_config_service.py  # Acceso y caché en memoria de ConfiguracionNLU
-│       ├── providers.py           # Adaptadores LLM (VLLMAdapter, GeminiAdapter)
-│       ├── qdrant_service.py      # Operaciones sobre la colección vectorial
-│       ├── rag_params_service.py  # Acceso y caché en memoria de ConfiguracionRAG
-│       └── rag_service.py         # Pipeline RAG: chunking, embedding, retrieval, generación
-├── .env                           # Variables para ejecución local (usa puertos del host)
-├── .env.docker                    # Variables para ejecución en Docker (usa nombres de servicio)
-├── .env.example                   # Plantilla de referencia sin valores sensibles
+│   │       ├── auth.py          # Login y refresh de token JWT
+│   │       ├── usuarios.py      # CRUD de usuarios administradores
+│   │       ├── documents.py     # Subida, listado, eliminación y reprocesado de documentos
+│   │       ├── configuracion.py # Cambio de motor activo (local/cloud)
+│   │       ├── rag_params.py    # Ajuste de parámetros RAG en caliente
+│   │       ├── nlu_config.py    # Configuración de intents y mensajes NLU
+│   │       ├── ws_chat.py       # WebSocket para el chat del usuario final
+│   │       └── cache_admin.py   # Gestión del caché semántico (listar, editar, eliminar)
+│   └── repositories/
+│       └── documento_repository.py  # Acceso a datos de documentos en PostgreSQL
+├── requirements.txt
 ├── Dockerfile.backend
-└── requirements.txt
+├── .env                         # Variables para ejecución local (no versionar)
+└── .env.docker                  # Variables para ejecución dentro de Docker (no versionar)
 ```
 
 ---
 
-## 3. Variables de entorno
+## 4. Modelos de inteligencia artificial
 
-El backend utiliza dos archivos de entorno según el contexto de ejecución.
+El sistema implementa dos modos de operación que se pueden cambiar desde el panel de administración del frontend sin reiniciar ningún servicio.
+
+### Modo `local:local` (por defecto)
+
+- **Embeddings**: `paraphrase-multilingual-MiniLM-L12-v2` (sentence-transformers, 384 dimensiones). Se ejecuta en CPU dentro del contenedor backend.
+- **LLM**: `Qwen/Qwen2.5-3B-Instruct-AWQ`, servido por vLLM bajo el nombre de alias `llama3-local`. Requiere GPU NVIDIA.
+
+Parámetros de vLLM configurados en el compose:
+
+| Parámetro | Valor | Descripción |
+|---|---|---|
+| `--max-model-len` | 2048 | Longitud máxima de contexto en tokens |
+| `--gpu-memory-utilization` | 0.90 | Fracción de VRAM reservada para el modelo |
+| `--max-num-seqs` | 4 | Máximo de secuencias en paralelo |
+| `--quantization` | awq | Cuantización AWQ para reducir uso de VRAM |
+| `--enable-prefix-caching` | — | Reutiliza KV-cache de prefijos de prompt repetidos |
+
+El modelo se descarga automáticamente desde Hugging Face en el primer arranque (~2 GB cuantizado) y se guarda en el volumen `tesis_hf_models_cache`.
+
+### Modo `local:cloud`
+
+- **Embeddings**: mismo modelo local (`paraphrase-multilingual-MiniLM-L12-v2`).
+- **LLM**: Google Gemini 2.5 Flash, invocado mediante la API de Google AI Studio.
+
+Este modo está completamente implementado y funcional. Para activarlo se requiere una `GOOGLE_API_KEY` válida en el `.env.docker` del backend y cambiar el motor desde el panel de administración. El servicio `tesis-vllm` sigue corriendo pero no recibe solicitudes de generación.
+
+### Límites del prompt
+
+Los límites de tokens están definidos en `app/core/prompts.py` y se ajustan automáticamente al presupuesto del modelo:
+
+| Concepto | Tokens |
+|---|---|
+| Ventana total del modelo | 2048 |
+| Reservados para respuesta | 512 |
+| Reservados para contexto RAG | 630 |
+| Disponibles para system prompt editable | ~906 (≈ 3171 caracteres) |
+
+El system prompt base es editable desde el panel de administración. El sufijo con el contexto y la pregunta se concatena automáticamente y no es editable.
+
+---
+
+## 5. Caché semántico
+
+Redis implementa un caché de dos niveles para las respuestas RAG:
+
+- **Caché exacto**: si la pregunta (hasheada) ya existe en Redis, retorna la respuesta almacenada sin invocar al LLM ni a Qdrant.
+- **Caché semántico**: si no hay coincidencia exacta, compara el embedding de la nueva pregunta contra los embeddings almacenados. Si la similitud coseno supera el umbral configurado, retorna la respuesta semánticamente más cercana.
+
+Las respuestas no se almacenan en caché si son respuestas de error, respuestas de rechazo (el LLM no encontró información relevante), o si el texto es demasiado breve o incompleto.
+
+Desde el frontend, el panel de administración permite listar todas las entradas del caché, buscar por texto de pregunta, ver la respuesta completa de cada entrada, corregir manualmente una respuesta almacenada y eliminar entradas individuales.
+
+---
+
+## 6. API REST — endpoints
+
+Todos los endpoints protegidos requieren el header `Authorization: Bearer <token>` obtenido en `/auth/login`.
+
+| Método | Ruta | Descripción |
+|---|---|---|
+| `GET` | `/` | Health check del servidor |
+| `GET` | `/health` | Health check interno (usado por Docker) |
+| `POST` | `/auth/login` | Autenticación. Devuelve token JWT |
+| `GET` | `/usuarios/` | Listar administradores |
+| `POST` | `/usuarios/` | Crear nuevo administrador |
+| `PUT` | `/usuarios/{id}` | Editar administrador |
+| `DELETE` | `/usuarios/{id}` | Eliminar administrador |
+| `GET` | `/documents/` | Listar documentos indexados |
+| `POST` | `/documents/upload` | Subir y procesar nuevo documento |
+| `DELETE` | `/documents/{id}` | Eliminar documento y sus vectores |
+| `POST` | `/documents/{id}/reprocess` | Reprocesar fragmentación y embedding |
+| `GET` | `/configuracion/` | Obtener motor activo (motor_vectores + motor_llm) |
+| `PUT` | `/configuracion/` | Cambiar motor activo en caliente |
+| `GET` | `/rag-params/` | Obtener parámetros RAG actuales |
+| `PUT` | `/rag-params/` | Actualizar parámetros RAG (top_k, threshold, etc.) |
+| `GET` | `/nlu-config/` | Obtener configuración NLU (intents, mensajes) |
+| `PUT` | `/nlu-config/` | Actualizar configuración NLU |
+| `GET` | `/cache/` | Listar entradas del caché semántico |
+| `PUT` | `/cache/{key}` | Corregir respuesta almacenada en caché |
+| `DELETE` | `/cache/{key}` | Eliminar entrada del caché |
+| `WS` | `/ws/chat` | WebSocket para consultas RAG del usuario final |
+| `GET` | `/metrics` | Métricas Prometheus |
+
+---
+
+## 7. Variables de entorno
+
+El backend usa dos archivos de entorno según el contexto de ejecución:
 
 ### `.env` — ejecución local
 
-Se usa cuando el backend corre directamente con `uvicorn` fuera de Docker. Las URLs apuntan a `localhost` con los puertos mapeados al host.
-
 ```env
-DATABASE_URL=postgresql://postgres:PASSWORD@localhost:5432/db_tesis_cc
+DATABASE_URL=postgresql://postgres:<password>@localhost:5432/db_tesis_cc
 API_HOST=0.0.0.0
 API_PORT=8000
-FRONTEND_URL=http://IP_LOCAL:5173
-SECRET_KEY=clave_hex_de_64_caracteres
+FRONTEND_URL=http://localhost:5173
+SECRET_KEY=<clave_hex_larga>
 ACCESS_TOKEN_EXPIRE_MINUTES=480
-GOOGLE_API_KEY=clave_de_google_ai_studio
+GOOGLE_API_KEY=<tu_api_key>
 VLLM_BASE_URL=http://localhost:8001/v1
 QDRANT_URL=http://localhost:6334
 REDIS_URL=redis://localhost:6380
@@ -115,324 +214,70 @@ LLM_MODEL_CLOUD=gemini-2.5-flash
 DOCUMENTS_DIR_LOCAL=./documents_local
 ```
 
-### `.env.docker` — ejecución en contenedor
+### `.env.docker` — ejecución dentro de Docker
 
-Se usa cuando el backend corre dentro de Docker Compose. Las URLs utilizan los nombres de servicio de la red interna `tesis-net`.
+Idéntico al anterior excepto por las URLs de los servicios dependientes, que usan los nombres de contenedor de la red interna `tesis-net`:
 
 ```env
-DATABASE_URL=postgresql://postgres:PASSWORD@postgres:5432/db_tesis_cc
-API_HOST=0.0.0.0
-API_PORT=8000
-FRONTEND_URL=http://IP_LOCAL:5173
-SECRET_KEY=clave_hex_de_64_caracteres
-ACCESS_TOKEN_EXPIRE_MINUTES=480
-GOOGLE_API_KEY=clave_de_google_ai_studio
+DATABASE_URL=postgresql://postgres:<password>@postgres:5432/db_tesis_cc
 VLLM_BASE_URL=http://vllm:8001/v1
 QDRANT_URL=http://qdrant:6333
 REDIS_URL=redis://redis:6379
-QDRANT_COLLECTION_LOCAL=documentos_local
-LLM_MODEL_LOCAL=llama3-local
-EMBED_MODEL_LOCAL=paraphrase-multilingual-MiniLM-L12-v2
-EMBED_DIMENSION_LOCAL=384
-LLM_MODEL_CLOUD=gemini-2.5-flash
-DOCUMENTS_DIR_LOCAL=./documents_local
+# El resto de variables son iguales al .env local
 ```
 
-Para generar un `SECRET_KEY` seguro:
+> **Seguridad**: nunca versionar ninguno de estos archivos. Ambos contienen credenciales y la `SECRET_KEY` de JWT.
+
+Para generar una `SECRET_KEY` segura:
 
 ```bash
 python3 -c "import secrets; print(secrets.token_hex(32))"
 ```
 
-### Descripción de variables
+---
 
-| Variable | Descripción |
-|---|---|
-| `DATABASE_URL` | Cadena de conexión PostgreSQL completa |
-| `SECRET_KEY` | Clave de firma JWT. Debe ser aleatoria y mantenerse secreta |
-| `ACCESS_TOKEN_EXPIRE_MINUTES` | Duración del token de sesión en minutos |
-| `GOOGLE_API_KEY` | Clave de Google AI Studio para el modo cloud (Gemini) |
-| `VLLM_BASE_URL` | URL base del servidor vLLM (compatible con OpenAI API) |
-| `QDRANT_URL` | URL HTTP de la instancia Qdrant |
-| `REDIS_URL` | URL de conexión Redis |
-| `QDRANT_COLLECTION_LOCAL` | Nombre de la colección vectorial para documentos locales |
-| `LLM_MODEL_LOCAL` | Nombre del modelo servido por vLLM (`--served-model-name`) |
-| `EMBED_MODEL_LOCAL` | Modelo sentence-transformers para generación de embeddings |
-| `EMBED_DIMENSION_LOCAL` | Dimensión del vector de embedding (debe coincidir con el modelo) |
-| `LLM_MODEL_CLOUD` | Modelo Gemini a usar en modo cloud |
-| `DOCUMENTS_DIR_LOCAL` | Directorio donde se almacenan los archivos subidos |
+## 8. Ejecución en desarrollo (sin Docker)
+
+Requiere PostgreSQL, Qdrant y Redis corriendo localmente (o sus puertos mapeados desde Docker).
+
+```bash
+# Crear entorno virtual e instalar dependencias
+python3 -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install torch==2.6.0+cpu --index-url https://download.pytorch.org/whl/cpu
+pip install -r requirements.txt
+
+# Configurar variables de entorno
+cp .env.example .env
+# Editar .env con los valores correctos
+
+# Iniciar el servidor
+uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+```
+
+El flag `--reload` activa recarga automática ante cambios en el código fuente. No usar en producción.
+
+Al iniciar, el backend crea automáticamente todas las tablas de la base de datos si no existen y siembra un usuario `admin` / `admin123` si no hay ningún administrador registrado. **Cambiar esta contraseña inmediatamente desde el panel de administración.**
 
 ---
 
-## 4. Inicialización automática
+## 9. Ejecución con Docker (producción)
 
-Al arrancar, el backend ejecuta las siguientes operaciones mediante el `lifespan` de FastAPI:
+El backend no se levanta de forma independiente. Forma parte del stack orquestado desde el repositorio `tesis-deploy`. Consultar el README de ese repositorio para las instrucciones completas de despliegue.
 
-1. Crea todas las tablas en PostgreSQL si no existen (`create_all`).
-2. Crea el usuario administrador por defecto (`admin` / `admin123`) si no existe. Se recomienda cambiar esta contraseña tras el primer acceso.
-3. Crea el registro de `ConfiguracionRAG` con los valores de `DEFAULTS_RAG` si no existe.
-4. Crea el registro de `ConfiguracionNLU` con los valores de `DEFAULTS_NLU` si no existe.
-5. Si existe el archivo `config_ia.json` de versiones anteriores, migra su contenido a la tabla `ConfiguracionMotor` y elimina el archivo.
-6. Si el motor LLM activo es `local`, ejecuta una consulta de precalentamiento para inicializar el modelo de embeddings en memoria antes de la primera solicitud real.
-
-Todos los valores de seed están centralizados en `app/core/defaults.py`.
+El `Dockerfile.backend` instala PyTorch CPU (suficiente para los embeddings) y luego el resto de dependencias de `requirements.txt`. El modelo de embeddings se descarga automáticamente de Hugging Face en el primer uso.
 
 ---
 
-## 5. API — Endpoints
+## 10. Notas de implementación
 
-Todos los endpoints, excepto `/` y `/api/auth/login`, requieren autenticación mediante el header `Authorization: Bearer <token>`.
+**Precalentamiento al arrancar.** Al iniciar, el backend envía internamente una consulta de prueba al pipeline RAG para que el modelo de embeddings se cargue en memoria antes de la primera solicitud real del usuario. Si vLLM aún no está disponible en ese momento, el precalentamiento falla silenciosamente y el sistema sigue operativo.
 
-### Health
+**Migración de configuración.** Si existe un archivo `config_ia.json` en el directorio de trabajo (legado de versiones anteriores), el backend lo migra automáticamente a la tabla `ConfiguracionMotor` de PostgreSQL al arrancar y elimina el archivo.
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/` | Estado del servidor y versión |
-| GET | `/metrics` | Métricas en formato Prometheus (text/plain) |
+**Cambio de motor en caliente.** Cambiar entre `local:local` y `local:cloud` mediante el endpoint `PUT /configuracion/` no requiere reiniciar el proceso. La configuración se persiste en PostgreSQL y sobrevive reinicios.
 
-### Autenticación
+**CORS.** El backend acepta peticiones desde cualquier origen (`allow_origins=["*"]`). Esto es deliberado porque el frontend se conecta desde la IP de la máquina detectada dinámicamente en el navegador. Restringir el origen en entornos donde la IP es estática y conocida.
 
-| Método | Ruta | Descripción |
-|---|---|---|
-| POST | `/api/auth/login` | Obtener token JWT. Body: `{"username": "", "password": ""}` |
-
-### Documentos
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/api/documentos/` | Listar todos los documentos |
-| POST | `/api/documentos/subir` | Subir y procesar un documento. Formatos: PDF, DOCX, TXT, MD. Máximo 10 documentos, 5 MB por archivo |
-| DELETE | `/api/documentos/{id}` | Eliminar documento, sus vectores en Qdrant y su caché en Redis |
-| POST | `/api/documentos/reset-todo` | Eliminar todos los documentos y vaciar la colección vectorial |
-
-### Usuarios
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/api/usuarios/` | Listar usuarios |
-| POST | `/api/usuarios/` | Crear usuario |
-| PUT | `/api/usuarios/{id}` | Actualizar usuario |
-| DELETE | `/api/usuarios/{id}` | Eliminar usuario |
-
-### Configuración del motor
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/api/config/motor` | Motor activo actual |
-| PUT | `/api/config/motor` | Cambiar motor. Body: `{"motor_vectores": "local", "motor_llm": "local\|cloud"}` |
-
-Combinaciones válidas: `local:local` (vLLM + embeddings locales) y `local:cloud` (embeddings locales + Gemini).
-
-### Parámetros RAG
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/api/rag-params` | Parámetros actuales, defaults y límites |
-| PUT | `/api/rag-params` | Actualizar parámetros con limpieza automática de caché |
-| POST | `/api/rag-params/reset` | Restaurar parámetros a valores por defecto |
-| GET | `/api/rag-params/defaults` | Consultar defaults y límites sin modificar nada |
-
-Parámetros ajustables:
-
-| Parámetro | Tipo | Rango | Descripción |
-|---|---|---|---|
-| `umbral_relevancia_local` | float | [0.05, 0.50] | Score coseno mínimo para incluir un fragmento en el contexto RAG |
-| `rag_k_local` | int | [2, 20] | Número de fragmentos a recuperar de Qdrant |
-| `prompt_principal` | string | — | Plantilla del prompt de usuario (`{contexto}` y `{pregunta}`) |
-| `system_prompt` | string | — | Prompt del sistema enviado al LLM |
-
-### Configuración NLU
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/api/nlu-config` | Configuración NLU actual |
-| PUT | `/api/nlu-config` | Actualizar campos NLU (actualización parcial) |
-| POST | `/api/nlu-config/reset` | Restaurar a valores por defecto |
-| GET | `/api/nlu-config/defaults` | Consultar defaults sin modificar |
-
-### Administración de caché
-
-| Método | Ruta | Descripción |
-|---|---|---|
-| GET | `/api/cache-admin/entradas` | Listar entradas del caché Redis con preview de respuesta |
-| GET | `/api/cache-admin/entradas/buscar?q=` | Buscar entradas por texto de pregunta |
-| GET | `/api/cache-admin/entradas/{key}` | Obtener entrada completa por clave Redis |
-| PATCH | `/api/cache-admin/entradas/{key}` | Corregir manualmente la respuesta de una entrada |
-| DELETE | `/api/cache-admin/entradas/{key}` | Eliminar una entrada del caché |
-
----
-
-## 6. WebSocket — Protocolo de mensajes
-
-### Chat — `ws://host:8000/ws/chat`
-
-No requiere autenticación. El servidor asigna un `client_id` único a cada conexión.
-
-**Mensajes que envía el cliente:**
-
-```json
-{ "tipo": "pregunta", "pregunta": "¿Cuántos créditos necesito para graduarme?" }
-```
-
-```json
-{ "tipo": "ping" }
-```
-
-**Mensajes que envía el servidor:**
-
-| `tipo` | Descripción |
-|---|---|
-| `status` | Mensaje de estado durante el procesamiento |
-| `token` | Fragmento de texto en streaming (solo modo `local:local`) |
-| `respuesta` | Respuesta completa con campos `pregunta`, `respuesta`, `motor`, `timestamp` |
-| `complete` | Señal de fin de consulta |
-| `error` | Descripción del error |
-| `pong` | Respuesta a ping |
-| `info` | Notificación broadcast cuando el motor activo cambia |
-
-El servidor aplica un rate limit de 60 consultas por minuto por cliente, implementado con Redis.
-
-### Monitor — `ws://host:8000/ws/monitor?token=JWT`
-
-Requiere token JWT válido. Emite en tiempo real el estado de conexiones activas, consultas en curso, historial de consultas, latencia promedio y tasa de acierto del caché.
-
----
-
-## 7. Caché semántico
-
-El servicio `cache_service.py` implementa un caché de respuestas RAG en Redis con dos niveles de búsqueda y un circuit breaker para tolerancia a fallos.
-
-### Niveles de búsqueda
-
-**Nivel 1 — Coincidencia exacta.** La pregunta se hashea y se busca la clave correspondiente en Redis. Si existe, retorna la respuesta sin ningún procesamiento adicional.
-
-**Nivel 2 — Coincidencia semántica.** Si no hay coincidencia exacta y el embedding de la pregunta está disponible, se compara mediante similitud coseno contra los embeddings almacenados en Redis. Si alguno supera el umbral configurado, se retorna esa respuesta. El scan semántico está limitado a un número máximo de claves para no bloquear el servidor.
-
-### Criterios de almacenamiento
-
-Una respuesta no se almacena en caché si:
-- El texto tiene menos de 20 caracteres
-- Contiene frases de rechazo configuradas en el NLU (el LLM no encontró información)
-- Es una respuesta de error interno
-- El texto no termina con un signo de puntuación final (respuesta truncada)
-
-### Circuit breaker
-
-Si Redis falla tres veces consecutivas, el circuit breaker suspende el uso del caché durante 30 segundos. El sistema continúa funcionando sin caché durante ese período.
-
-### Administración desde el frontend
-
-El panel de administración expone una vista completa del caché donde es posible buscar entradas, ver la respuesta almacenada junto con su motor de origen y timestamp, corregir manualmente respuestas incorrectas sin necesidad de reprocesar el documento, y eliminar entradas individuales.
-
----
-
-## 8. Patrones de diseño implementados
-
-| Patrón | Ubicación | Aplicación |
-|---|---|---|
-| Adapter | `app/services/providers.py` | `VLLMAdapter` y `GeminiAdapter` implementan `LLMAdapter`. Permiten intercambiar el LLM sin modificar el servicio RAG |
-| Factory | `app/services/providers.py` | `crear_proveedor_llm(motor)` instancia el proveedor adecuado según el motor activo |
-| Singleton | `app/core/singletons.py` | Una instancia compartida por proceso para los clientes de Qdrant, Redis, modelo de embeddings y httpx |
-| Repository | `app/repositories/documento_repository.py` | `DocumentoRepository` encapsula todas las queries SQLAlchemy sobre la entidad Documento |
-| Builder | `app/services/rag_service.py` | `PipelineRAGBuilder` construye el prompt final con selección y truncamiento de contexto según límite de tokens |
-| State | `app/domain/documento_state.py` | `EstadoNoSubido`, `EstadoProcesado`, `EstadoError` controlan las transiciones del ciclo de vida de un documento |
-| Observer | `app/core/event_bus.py` | `EventBus` notifica a los clientes WebSocket conectados cuando el motor activo cambia |
-
----
-
-## 9. Gestión del contenedor backend
-
-Estos comandos operan exclusivamente sobre el contenedor `tesis-backend`. Se ejecutan desde el directorio raíz del proyecto de despliegue (donde se encuentra el `docker-compose.yml`).
-
-### Detener el backend
-
-```bash
-docker compose stop backend
-```
-
-### Iniciar el backend detenido
-
-```bash
-docker compose start backend
-```
-
-### Reiniciar el backend
-
-```bash
-docker compose restart backend
-```
-
-### Reconstruir y reiniciar el backend
-
-Necesario únicamente cuando se modifican `requirements.txt` o el `Dockerfile.backend`. Para cambios en código Python no es necesario porque el directorio del proyecto está montado como volumen en `/app`.
-
-```bash
-docker compose up -d --build --no-deps backend
-```
-
-### Ver logs en tiempo real
-
-```bash
-docker logs tesis-backend -f --tail 100
-```
-
-### Ejecutar un comando dentro del contenedor
-
-```bash
-docker exec -it tesis-backend bash
-```
-
----
-
-## 10. Verificación del servicio
-
-### Estado HTTP
-
-```bash
-curl -s http://localhost:8000/ | python3 -m json.tool
-```
-
-Respuesta esperada:
-
-```json
-{
-    "status": "ok",
-    "message": "Servidor Backend RAG (Arquitectura Dual) en línea.",
-    "version": "4.0.0",
-    "modos_activos": ["local:local", "local:cloud"]
-}
-```
-
-### Autenticación
-
-```bash
-curl -s -X POST http://localhost:8000/api/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"username": "admin", "password": "admin123"}' \
-  | python3 -m json.tool
-```
-
-### Motor activo
-
-```bash
-TOKEN="<access_token_del_paso_anterior>"
-
-curl -s http://localhost:8000/api/config/motor \
-  -H "Authorization: Bearer $TOKEN" \
-  | python3 -m json.tool
-```
-
-### Logs de arranque esperados
-
-```
-[STARTUP] admin creado              # solo en el primer arranque
-[STARTUP] precalentando modelo (local:local)
-Application startup complete.
-```
-
-Si el motor activo es `local:cloud`:
-
-```
-[STARTUP] motor cloud activo, precalentamiento omitido
-Application startup complete.
-```
+**WebSocket y HTTPS.** El frontend se conecta al WebSocket usando `wss://` cuando accede vía HTTPS. El backend en sí escucha HTTP puro; el cifrado TLS lo aporta nginx en el contenedor del frontend, que actúa como proxy para los endpoints `/api/` y `/ws/`.

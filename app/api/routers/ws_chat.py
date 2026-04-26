@@ -21,6 +21,11 @@ from app.core.event_bus import event_bus
 
 router = APIRouter(prefix="/ws", tags=["websocket"])
 
+MAX_CONEXIONES_POR_IP   = 3  
+MAX_PREGUNTAS_POR_MIN   = 20  
+MAX_CONEXIONES_GLOBALES = 20  
+
+
 def _on_motor_cambiado(data: dict):
     motor_str = f"{data.get('motor_vectores', '?')}:{data.get('motor_llm', '?')}"
     mensaje = {
@@ -115,12 +120,41 @@ class ConnectionManager:
         self._max_latencias = 100
         self._monitor_connections: List[WebSocket] = []
 
-    async def conectar_usuario(self, websocket: WebSocket, client_id: str,
-                               username: str, ip: str = ""):
+    def _contar_conexiones_por_ip(self, ip: str) -> int:
+        return sum(1 for c in self._conexiones.values() if c.ip == ip)
+
+    async def conectar_usuario(
+        self,
+        websocket: WebSocket,
+        client_id: str,
+        username: str,
+        ip: str = "",
+    ) -> bool:
+        if len(self._conexiones) >= MAX_CONEXIONES_GLOBALES:
+            await websocket.accept()
+            await websocket.send_json({
+                "tipo": TIPOS_WEBSOCKET["error"],
+                "mensaje": "El asistente está al máximo de capacidad en este momento. Intenta en unos segundos.",
+            })
+            await websocket.close(code=1008)
+            print(f"[WS THROTTLE] Conexión rechazada (global lleno): ip={ip}")
+            return False
+
+        if ip and self._contar_conexiones_por_ip(ip) >= MAX_CONEXIONES_POR_IP:
+            await websocket.accept()
+            await websocket.send_json({
+                "tipo": TIPOS_WEBSOCKET["error"],
+                "mensaje": "Demasiadas sesiones abiertas desde tu dispositivo. Cierra alguna pestaña e intenta de nuevo.",
+            })
+            await websocket.close(code=1008)
+            print(f"[WS THROTTLE] Conexión rechazada (IP limit): ip={ip}")
+            return False
+
         await websocket.accept()
         self._conexiones[client_id] = ConexionInfo(client_id, username, websocket, ip)
-        print(f"[WS] {client_id} conectado. Total: {len(self._conexiones)}")
+        print(f"[WS] {client_id} conectado (ip={ip}). Total: {len(self._conexiones)}")
         await self._broadcast_monitor()
+        return True
 
     def desconectar_usuario(self, client_id: str):
         self._conexiones.pop(client_id, None)
@@ -202,7 +236,7 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
-def _check_rate_limit(client_id: str, max_por_minuto: int = 60) -> bool:
+def _check_rate_limit(client_id: str, max_por_minuto: int = MAX_PREGUNTAS_POR_MIN) -> bool:
     try:
         from app.core.singletons import RedisClientSingleton
         r = RedisClientSingleton().client
@@ -217,7 +251,7 @@ def _check_rate_limit(client_id: str, max_por_minuto: int = 60) -> bool:
         r.expire(key, ventana + 5)
         return True
     except Exception:
-        return True  
+        return True
 
 
 @router.websocket("/chat")
@@ -232,7 +266,9 @@ async def chat_websocket(
     if websocket.client:
         ip = str(websocket.client.host)
 
-    await manager.conectar_usuario(websocket, client_id, username, ip)
+    aceptado = await manager.conectar_usuario(websocket, client_id, username, ip)
+    if not aceptado:
+        return 
 
     try:
         await manager.send_to_user(client_id, {
@@ -309,7 +345,7 @@ async def _procesar_pregunta(client_id: str, pregunta: str):
         })
         return
 
-    if not _check_rate_limit(client_id, max_por_minuto=60):
+    if not _check_rate_limit(client_id):
         await manager.send_to_user(client_id, {
             "tipo": TIPOS_WEBSOCKET["error"],
             "mensaje": "Demasiadas consultas seguidas. Espera un momento antes de continuar.",
