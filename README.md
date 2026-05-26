@@ -1,6 +1,6 @@
-# Asistente Académico EPN — Local - Prototipo 3
+# Asistente Académico EPN — Prototipo 3
 
-Sistema de consulta académica desarrollado como prototipo de tesis para la Escuela Politécnica Nacional. Permite consultar documentos institucionales mediante un modelo de lenguaje ejecutado íntegramente de forma local, sin dependencia de servicios externos. El backend está construido con FastAPI, el frontend con Vue 3, y el almacenamiento vectorial utiliza ChromaDB sobre PostgreSQL.
+Backend del sistema de consulta académica desarrollado como prototipo de tesis para la Escuela Politécnica Nacional. Construido con FastAPI, PostgreSQL y ChromaDB, ejecuta el modelo de lenguaje íntegramente de forma local mediante Ollama.
 
 ---
 
@@ -21,7 +21,6 @@ Sistema de consulta académica desarrollado como prototipo de tesis para la Escu
 | Componente | Versión |
 |---|---|
 | Python | 3.11 |
-| Node.js | 20 LTS |
 | PostgreSQL | 15 |
 | Ollama | 0.6.x |
 | CUDA Toolkit | 12.x |
@@ -42,7 +41,7 @@ ollama --version
 
 ### 1.2 Forzar uso de la RTX 3050
 
-El equipo tiene iGPU AMD e dGPU NVIDIA. Sin esta configuración, Ollama carga el modelo en CPU. Ejecutar PowerShell como Administrador:
+El equipo tiene iGPU AMD y dGPU NVIDIA. Sin esta configuración, Ollama carga el modelo en CPU. Ejecutar PowerShell como Administrador:
 
 ```powershell
 [System.Environment]::SetEnvironmentVariable("CUDA_VISIBLE_DEVICES", "0", "Machine")
@@ -113,9 +112,9 @@ VALUES ('admin', '<hash_generado>', 'admin');
 
 ---
 
-## 3. Backend
+## 3. Instalación y configuración
 
-### 3.1 Entorno virtual e instalación
+### 3.1 Entorno virtual e instalación de dependencias
 
 ```powershell
 cd Backend
@@ -126,7 +125,7 @@ pip install -r requirements.txt
 
 ### 3.2 Archivo `.env`
 
-Editar `Backend/.env` con los valores del entorno local:
+Crear el archivo `Backend/.env` con los siguientes valores:
 
 ```env
 DATABASE_URL=postgresql://postgres:<contraseña>@localhost:5432/db_tesis_cc
@@ -146,40 +145,11 @@ OLLAMA_KEEP_ALIVE=60m
 uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-El backend queda disponible en `http://localhost:8000`. La documentación de la API se encuentra en `http://localhost:8000/docs`.
+El backend queda disponible en `http://localhost:8000`. La documentación interactiva de la API se encuentra en `http://localhost:8000/docs`.
 
 Al iniciar, el servicio precalienta el modelo LLM para reducir la latencia de la primera consulta.
 
----
-
-## 4. Frontend
-
-### 4.1 Instalación
-
-```powershell
-cd Frontend
-npm install
-```
-
-### 4.2 Archivo `.env`
-
-```env
-VITE_BACKEND_URL=http://localhost:8000
-```
-
-### 4.3 Levantar el servidor de desarrollo
-
-```powershell
-npm run dev
-```
-
-El frontend queda disponible en `http://localhost:5173`.
-
----
-
-## 5. Verificación del sistema
-
-Con backend y frontend activos, ejecutar:
+### 3.4 Verificación
 
 ```powershell
 curl http://localhost:8000/
@@ -193,7 +163,7 @@ Respuesta esperada:
 
 ---
 
-## 6. Pruebas de rendimiento
+## 4. Pruebas de rendimiento
 
 Los scripts se encuentran en `Backend/scripts/` y requieren que el backend esté en ejecución y que exista el archivo `banco_preguntas.json` en el mismo directorio.
 
