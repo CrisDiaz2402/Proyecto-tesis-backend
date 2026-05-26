@@ -1,4 +1,3 @@
-# app/api/routers/usuarios.py
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from typing import List
@@ -21,9 +20,8 @@ def get_db():
 def crear_usuario(
     usuario: UsuarioCreate,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),   # 🔒 requiere JWT
+    _: models.Usuario = Depends(get_current_user),
 ):
-    """Crea un nuevo administrador encriptando su contraseña."""
     usuario_existente = db.query(models.Usuario).filter(
         models.Usuario.username == usuario.username
     ).first()
@@ -44,9 +42,8 @@ def crear_usuario(
 @router.get("/", response_model=List[UsuarioOut])
 def listar_usuarios(
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),   # 🔒 requiere JWT
+    _: models.Usuario = Depends(get_current_user),
 ):
-    """Retorna la lista de todos los administradores."""
     return db.query(models.Usuario).order_by(models.Usuario.fecha_creacion.desc()).all()
 
 @router.put("/{usuario_id}", response_model=UsuarioOut)
@@ -54,9 +51,8 @@ def actualizar_usuario(
     usuario_id: str,
     usuario_update: UsuarioUpdate,
     db: Session = Depends(get_db),
-    _: models.Usuario = Depends(get_current_user),   # 🔒 requiere JWT
+    _: models.Usuario = Depends(get_current_user),
 ):
-    """Actualiza el username o la contraseña de un usuario."""
     db_user = db.query(models.Usuario).filter(models.Usuario.id == usuario_id).first()
     if not db_user:
         raise HTTPException(status_code=404, detail="Usuario no encontrado.")
@@ -84,9 +80,8 @@ def actualizar_usuario(
 def eliminar_usuario(
     usuario_id: str,
     db: Session = Depends(get_db),
-    usuario_actual: models.Usuario = Depends(get_current_user),  # 🔒 requiere JWT
+    usuario_actual: models.Usuario = Depends(get_current_user),
 ):
-    """Elimina permanentemente a un usuario."""
     if usuario_actual.id == usuario_id:
         raise HTTPException(status_code=400, detail="No puedes eliminarte a ti mismo.")
 

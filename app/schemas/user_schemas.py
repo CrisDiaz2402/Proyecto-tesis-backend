@@ -1,4 +1,3 @@
-# app/schemas/user_schemas.py
 from pydantic import BaseModel
 from datetime import datetime
 from typing import Optional
@@ -8,7 +7,7 @@ class UsuarioBase(BaseModel):
     rol: Optional[str] = "Admin"
 
 class UsuarioCreate(UsuarioBase):
-    password: str  # El frontend nos envía la contraseña en texto plano
+    password: str
 
 class UsuarioUpdate(BaseModel):
     username: Optional[str] = None
@@ -16,9 +15,8 @@ class UsuarioUpdate(BaseModel):
     rol: Optional[str] = None
 
 class UsuarioOut(UsuarioBase):
-    id: str        # Ahora es un string (UUID)
+    id: str
     fecha_creacion: datetime
     
-    # Esta configuración permite leer directamente desde el modelo de SQLAlchemy
     class Config:
         from_attributes = True

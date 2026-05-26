@@ -1,53 +1,45 @@
-# --- ENTORNOS VIRTUALES ---
+.venv/
+venv/
 venv-fastapi/
 env/
-venv/
 ENV/
 
-# --- SEGURIDAD Y CONFIGURACIÓN LOCAL ---
 .env
 config_ia.json
 
-# --- ARCHIVOS FÍSICOS (DOCUMENTOS) ---
-# Ignorar las carpetas donde se guardan los PDFs, Word, txt, etc.
 documents_local/
-documents_cloud/
-
-# Regla genérica para la carpeta de subidas
 uploads/*
 !uploads/.gitkeep
 
-# --- BASES DE DATOS Y RAG (VECTORES Y CACHÉ) ---
-# Carpetas de Chroma DB (Bases vectoriales)
 vector_store_local/
-vector_store_cloud/
-
-# Carpetas de Caché Semántico (Definidas en el .env)
-cache_ll/
-cache_lc/
-cache_cc/
-
-# Legado, temporales y otras bases de datos
 vector_store/
 vector_store_cache/
-vector_store_cache_local/
-vector_store_cache_cloud/
+cache_ll/
+
 *.sqlite
 *.sqlite3
 *.db
 
-# --- CACHE DE PYTHON ---
+datos_real_*.json
+datos_estres_*.json
+resultados_*/
+graficas_*/
+*.png
+*.html
+
 __pycache__/
 *.py[cod]
 *$py.class
 .pytest_cache/
 
-# --- LOGS Y ARCHIVOS TEMPORALES ---
 *.log
 *.tmp
 *.temp
 
-# --- IDEs y OS ---
 .vscode/
 .idea/
 .DS_Store
+Thumbs.db
+desktop.ini
+
+Modelfile

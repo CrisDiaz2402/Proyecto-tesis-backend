@@ -1,4 +1,3 @@
-# app/schemas/auth_schemas.py
 from pydantic import BaseModel
 
 class LoginRequest(BaseModel):
