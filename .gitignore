@@ -2,6 +2,7 @@ venv-fastapi/
 env/
 venv/
 ENV/
+venv_pruebas/
 
 .env
 config_ia.json

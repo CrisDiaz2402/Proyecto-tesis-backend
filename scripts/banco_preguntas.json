@@ -1,0 +1,95 @@
+{
+  "_meta": {
+    "descripcion": "Banco de preguntas para pruebas del sistema RAG — Asistente Académico EPN",
+    "carrera": "Ingeniería en Ciencias de la Computación",
+    "version": "2.1",
+    "notas": [
+      "seccion 'estres': 20 preguntas planas para prueba de carga y estrés",
+      "seccion 'real': 45 preguntas con tipo para prueba de comportamiento realista (v2.1: +25 preguntas nuevas)",
+      "Los scripts leen directamente de aquí sin pools duplicados"
+    ]
+  },
+
+  "estres": {
+    "descripcion": "20 preguntas variadas para prueba de estrés. El script las baraja y distribuye entre usuarios concurrentes.",
+    "preguntas": [
+      "¿Cuántos semestres dura la carrera de Computación?",
+      "¿Cuántos créditos necesito para graduarme?",
+      "¿Cuáles son los prerrequisitos de Inteligencia Artificial?",
+      "¿Cuántas horas de prácticas laborales necesito completar?",
+      "¿Qué materias conforman el Nivel 1?",
+      "¿En qué semestre se dicta Cloud Computing?",
+      "¿Cuántos créditos tiene Programación I?",
+      "¿Qué prerrequisito tiene Auditoría Informática?",
+      "¿Cuántas asignaturas en total tiene la carrera?",
+      "¿Cuáles son las opciones de titulación disponibles?",
+      "¿Cuántas horas de servicio comunitario se requieren?",
+      "¿Qué materias tiene el Nivel 5?",
+      "¿Qué debo aprobar para tomar Bases de Datos Distribuidas?",
+      "¿Cuántos créditos tiene Cloud Computing?",
+      "¿Qué materias conforman el Nivel 8?",
+      "¿Cuántos créditos tiene el Trabajo de Integración Curricular?",
+      "¿Qué requisitos adicionales fuera de la malla debo cumplir?",
+      "¿Cuántos créditos tiene cada semestre?",
+      "¿Cuáles son los prerrequisitos de Redes de Computadores II?",
+      "¿Cuál es el total de horas de toda la carrera?"
+    ]
+  },
+
+  "real": {
+    "descripcion": "45 preguntas con tipo para prueba de comportamiento realista. Cubren 4 tipos: Factual, Correccion, Anti_alucinacion, Fuera_dominio.",
+    "tipos": {
+      "Factual": "Dato puntual que debe estar en el documento",
+      "Correccion": "El usuario da un dato falso — el sistema debe corregirlo",
+      "Anti_alucinacion": "El dato no existe — cualquier respuesta concreta es alucinación",
+      "Fuera_dominio": "Pregunta completamente fuera del dominio del documento"
+    },
+    "preguntas": [
+      { "tipo": "Factual",          "pregunta": "¿Cuántos semestres dura la carrera de Computación?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuántos créditos necesito para graduarme?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuántas materias tiene la carrera en total?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuáles son las materias del primer semestre?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuáles son los prerrequisitos de Inteligencia Artificial?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuántas horas de prácticas laborales necesito?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuántas horas de servicio comunitario se requieren?" },
+      { "tipo": "Factual",          "pregunta": "¿En qué semestre se dicta Cloud Computing y cuántos créditos tiene?" },
+      { "tipo": "Factual",          "pregunta": "¿Qué materias conforman el Nivel 8?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuáles son las opciones para graduarme?" },
+      { "tipo": "Correccion",       "pregunta": "Me dijeron que la carrera dura 10 semestres, ¿es verdad?" },
+      { "tipo": "Correccion",       "pregunta": "¿Es cierto que Programación I tiene 3 créditos?" },
+      { "tipo": "Correccion",       "pregunta": "¿Cloud Computing requiere Redes de Computadores II como prerrequisito?" },
+      { "tipo": "Correccion",       "pregunta": "¿Las prácticas laborales se hacen obligatoriamente en el noveno semestre?" },
+      { "tipo": "Correccion",       "pregunta": "¿El total de créditos para graduarme es 120, verdad?" },
+      { "tipo": "Correccion",       "pregunta": "Escuché que el servicio comunitario son 120 horas, ¿correcto?" },
+      { "tipo": "Correccion",       "pregunta": "¿La carrera tiene una duración de 8 semestres?" },
+      { "tipo": "Anti_alucinacion", "pregunta": "¿Qué materia de la carrera trata sobre Blockchain y en qué semestre se dicta?" },
+      { "tipo": "Anti_alucinacion", "pregunta": "¿Cuál es el código de la materia Programación III?" },
+      { "tipo": "Anti_alucinacion", "pregunta": "¿Hay alguna mención o especialización en la carrera?" },
+      { "tipo": "Anti_alucinacion", "pregunta": "¿En qué semestre se dicta la materia de Machine Learning?" },
+      { "tipo": "Anti_alucinacion", "pregunta": "¿Cuál es el prerequisito de la materia Ciberseguridad Avanzada?" },
+      { "tipo": "Fuera_dominio",    "pregunta": "¿Cuál es el costo por crédito de la carrera?" },
+      { "tipo": "Fuera_dominio",    "pregunta": "¿Quién es el decano actual de la Facultad de Ingeniería de Sistemas?" },
+      { "tipo": "Fuera_dominio",    "pregunta": "¿Cuántos estudiantes se gradúan por año en esta carrera?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuáles son los prerrequisitos de Redes de Computadores II?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuántos créditos y horas tiene la materia Mecánica Newtoniana?" },
+      { "tipo": "Factual",          "pregunta": "¿Qué materias conforman el Nivel 6?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuántos créditos vale el Trabajo de Integración Curricular (TITD201)?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuáles son los prerrequisitos de Data Mining y Machine Learning?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuántas horas de aprendizaje autónomo contempla la carrera?" },
+      { "tipo": "Factual",          "pregunta": "¿Qué materias conforman el Nivel 2?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuántos requisitos adicionales fuera de la malla debo cumplir para graduarme y cuáles son?" },
+      { "tipo": "Factual",          "pregunta": "¿Cuál es el prerrequisito de Tecnologías de Seguridad?" },
+      { "tipo": "Factual",          "pregunta": "¿Qué materia debo aprobar antes de cursar Computación Distribuida?" },
+      { "tipo": "Correccion",       "pregunta": "¿Es correcto que Inteligencia Artificial requiere haber aprobado Data Mining como prerrequisito?" },
+      { "tipo": "Correccion",       "pregunta": "Un compañero me dijo que la carrera tiene 50 asignaturas en total, ¿es así?" },
+      { "tipo": "Correccion",       "pregunta": "¿El nivel con más materias de toda la malla es el Nivel 9 con 7 asignaturas?" },
+      { "tipo": "Correccion",       "pregunta": "¿Verdad que Auditoría Informática no tiene ningún prerrequisito?" },
+      { "tipo": "Correccion",       "pregunta": "Me comentaron que para graduarse hay solo dos opciones: tesis o pasantía, ¿es correcto?" },
+      { "tipo": "Anti_alucinacion", "pregunta": "¿En qué nivel se dicta la materia de Computación Cuántica?" },
+      { "tipo": "Anti_alucinacion", "pregunta": "¿Cuántos créditos tiene la materia de Visión por Computador?" },
+      { "tipo": "Anti_alucinacion", "pregunta": "¿Cuál es el prerrequisito de la materia Robótica Industrial?" },
+      { "tipo": "Fuera_dominio",    "pregunta": "¿Cuánto tiempo tarda en promedio un estudiante de esta carrera en conseguir empleo después de graduarse?" },
+      { "tipo": "Fuera_dominio",    "pregunta": "¿Qué tan reconocido es el título de la EPN en el mercado laboral ecuatoriano comparado con otras universidades?" }
+    ]
+  }
+}
